@@ -1,0 +1,11 @@
+product_id,product_code,product_name,category,status,sbg_id
+PROD001,PRD-1001,"Turbofan Sensor Kit",Hardware,Active,SBG001
+PROD002,PRD-1002,"Avionics Control Unit",Hardware,Active,SBG001
+PROD003,PRD1003,"Flight Data Recorder",Hardware,Active,SBG001
+PROD004,prd-1004,"Cabin Pressure Module",Hardware,Active,SBG001
+PROD005,PRD-1005,"Building Automation Suite",Software,Active,SBG002
+PROD006,PRD-1006,"Security Gateway",Misc,Active,SBG002
+PROD007,PRD-1007,"Industrial Sensor Array",Hardware,active,SBG003
+PROD008,PRD-1008,"Process Control Software",Software,Active,SBG003
+PROD009,PRD-1009,"Maintenance Service Plan",NULL,Active,SBG004
+PROD010,PRD-1010,"  Calibration Service  ",Service,Discontinued,SBG004

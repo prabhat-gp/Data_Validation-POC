@@ -1,0 +1,21 @@
+customer_id,customer_name,email,status,region,sbg_id
+CUST001,Wipro,contact@wipro.com,Active,APAC,SBG001
+CUST002,Accenture,info@accenture.com,Active,emea,SBG001
+CUST003," Infosys",sales@infosys.com,active,US,SBG001
+CUST004,TCS,hello@tcs.com,Active,apac,SBG001
+CUST005,Cognizant,tony@cognizant.com,Inactive,us,SBG001
+CUST006,Capgemini,bruce@@badmail,Active,US,SBG001
+CUST007,IBM,willy@ibm.com,Active,NULL,SBG001
+CUST008,NULL,unknown@nowhere.com,Active,APAC,SBG001
+CUST009,Deloitte,gavin@deloitte.com,pending,US,SBG002
+CUST010,"HCL Technologies ",contact@hcl.com,Active,EMEA,SBG002
+CUST011,"Tech Mahindra",info@techm.com,Active,apac,SBG002
+CUST012,Mindtree,sales@mindtree.com,Active,US,SBG003
+CUST013,"L&T Infotech",hello@lntinfotech.com,active,EMEA,SBG003
+CUST014,Mphasis,contact@mphasis,Active,APAC,SBG003
+CUST015,Hexaware,info@hexaware.com,Inactive,us,SBG004
+CUST016,Genpact,sales@genpact.com,Active,EMEA,SBG004
+CUST017,"Persistent Systems",hello@persistent.com,Active,APAC,SBG004
+CUST018,Zensar,contact@zensar..com,pending,US,SBG004
+CUST019,NIIT,info@niit.com,Active,emea,SBG004
+CUST020,Birlasoft,sales@birlasoft.com,Active,APAC,SBG004
