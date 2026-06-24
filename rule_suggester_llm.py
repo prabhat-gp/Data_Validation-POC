@@ -50,9 +50,29 @@ def check_ollama_connection():
         response = ollama.list()
         print(f"✓ Ollama service is running")
         
-        # Check if model exists
-        models = [m["name"] for m in response.get("models", [])]
-        if OLLAMA_MODEL in models or any(OLLAMA_MODEL in m for m in models):
+        # Check if model exists - handle ListResponse object from ollama package
+        models = []
+        if hasattr(response, "models"):
+            # ollama._types.ListResponse object with Model objects
+            for m in response.models:
+                # Each m is a Model object with a 'model' attribute
+                if hasattr(m, "model"):
+                    models.append(m.model)
+        elif isinstance(response, dict) and "models" in response:
+            # Fallback for dict format: {"models": [...]}
+            for m in response.get("models", []):
+                if isinstance(m, dict):
+                    model_name = m.get("name") or m.get("model") or str(m)
+                    models.append(model_name)
+        
+        # Check if the model is available (handle version tags like llama3.2:latest)
+        model_found = False
+        for m in models:
+            if OLLAMA_MODEL in m or m.startswith(OLLAMA_MODEL):
+                model_found = True
+                break
+        
+        if model_found:
             print(f"✓ Model '{OLLAMA_MODEL}' is available")
             return True
         else:
