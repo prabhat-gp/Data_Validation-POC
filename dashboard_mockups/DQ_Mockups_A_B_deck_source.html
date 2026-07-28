@@ -1,0 +1,495 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DQ Scorecard — Mock A & B (director deck)</title>
+<title>DQ Scorecard — Mock A &amp; B with Drill-downs + Calculations</title>
+<style>
+  :root{
+    --bg:#eef1f5;--panel:#fff;--panel-2:#f6f8fb;--ink:#141a22;--ink-soft:#4a5666;
+    --line:#dde3ec;--line-soft:#e9edf3;--accent:#2f5fd0;--accent-soft:#e7eefb;
+    --good:#1f9d57;--good-bg:#e4f5ec;--warn:#c98510;--warn-bg:#fbf1dd;--crit:#cf3b3b;--crit-bg:#fbe4e4;
+    --shadow:0 1px 2px rgba(20,26,34,.06),0 6px 20px rgba(20,26,34,.06);
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0c1016;--panel:#151b24;--panel-2:#1b222d;--ink:#e7ecf3;--ink-soft:#9aa7b8;
+    --line:#26303d;--line-soft:#1f2732;--accent:#6c9bff;--accent-soft:#1a2740;
+    --good:#3ecb7f;--good-bg:#123024;--warn:#e0a83c;--warn-bg:#33270f;--crit:#f16b6b;--crit-bg:#341a1c;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);}}
+  :root[data-theme="dark"]{
+    --bg:#0c1016;--panel:#151b24;--panel-2:#1b222d;--ink:#e7ecf3;--ink-soft:#9aa7b8;
+    --line:#26303d;--line-soft:#1f2732;--accent:#6c9bff;--accent-soft:#1a2740;
+    --good:#3ecb7f;--good-bg:#123024;--warn:#e0a83c;--warn-bg:#33270f;--crit:#f16b6b;--crit-bg:#341a1c;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);}
+  :root[data-theme="light"]{
+    --bg:#eef1f5;--panel:#fff;--panel-2:#f6f8fb;--ink:#141a22;--ink-soft:#4a5666;
+    --line:#dde3ec;--line-soft:#e9edf3;--accent:#2f5fd0;--accent-soft:#e7eefb;
+    --good:#1f9d57;--good-bg:#e4f5ec;--warn:#c98510;--warn-bg:#fbf1dd;--crit:#cf3b3b;--crit-bg:#fbe4e4;
+    --shadow:0 1px 2px rgba(20,26,34,.06),0 6px 20px rgba(20,26,34,.06);}
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 24px 96px}
+  .tnum{font-variant-numeric:tabular-nums}
+  code{font-family:var(--mono)}
+
+  .masthead{border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:30px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700;margin:0 0 10px}
+  h1{font-size:clamp(25px,3.6vw,36px);line-height:1.1;letter-spacing:-.02em;margin:0 0 12px;text-wrap:balance;font-weight:800}
+  .lede{max-width:74ch;color:var(--ink-soft);font-size:15.5px;margin:0}
+  .lede b{color:var(--ink)}
+
+  /* section nav */
+  .toc{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .toc a{font-size:12.5px;padding:7px 13px;border:1px solid var(--line);border-radius:8px;color:var(--ink-soft);
+         text-decoration:none;background:var(--panel);font-weight:600}
+  .toc a:hover{border-color:var(--accent);color:var(--accent)}
+
+  .design{margin-top:52px;scroll-margin-top:20px}
+  .dhead{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  .dnum{font-family:var(--mono);font-size:13px;color:var(--accent);font-weight:700;border:1px solid var(--accent);border-radius:6px;padding:2px 8px}
+  .dhead h2{font-size:22px;letter-spacing:-.01em;margin:0;font-weight:750}
+  .dsub{color:var(--ink-soft);font-size:14px;margin:0 0 16px;max-width:84ch}
+  .dsub b{color:var(--ink)}
+  .drilltag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--accent);
+            background:var(--accent-soft);padding:4px 9px;border-radius:6px;display:inline-block;margin:22px 0 10px}
+
+  .frame{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+  .chrome{display:flex;align-items:center;gap:10px;padding:11px 16px;border-bottom:1px solid var(--line);background:var(--panel-2)}
+  .dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:var(--line);display:block}
+  .chrome .ttl{font-size:12.5px;color:var(--ink-soft);font-weight:600}
+  .chrome .rt{margin-left:auto;font-size:11.5px;color:var(--ink-soft);font-family:var(--mono)}
+  .canvas{padding:18px}
+
+  .kpis{display:grid;gap:12px}
+  .k6{grid-template-columns:repeat(6,1fr)}.k5{grid-template-columns:repeat(5,1fr)}.k4{grid-template-columns:repeat(4,1fr)}
+  .kpi{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:11px;padding:13px 14px;position:relative;overflow:hidden}
+  .kpi .lab{font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:var(--ink-soft);font-weight:600;margin-bottom:9px;line-height:1.3}
+  .kpi .val{font-size:26px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .kpi .sub{font-size:11px;color:var(--ink-soft);margin-top:6px}
+  .kpi .strip{position:absolute;left:0;top:0;bottom:0;width:4px}
+  .s-good{background:var(--good)}.s-warn{background:var(--warn)}.s-crit{background:var(--crit)}.s-acc{background:var(--accent)}
+  .tone-good{color:var(--good)}.tone-warn{color:var(--warn)}.tone-crit{color:var(--crit)}.tone-acc{color:var(--accent)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:4px 10px;border-radius:999px}
+  .pill.good{background:var(--good-bg);color:var(--good)}.pill.warn{background:var(--warn-bg);color:var(--warn)}.pill.crit{background:var(--crit-bg);color:var(--crit)}
+  .pill .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+
+  .row{display:grid;gap:12px;margin-top:12px}
+  .panel{background:var(--panel-2);border:1px solid var(--line-soft);border-radius:11px;padding:14px}
+  .panel h4{margin:0 0 12px;font-size:13px;letter-spacing:.01em;font-weight:700;display:flex;align-items:center;gap:8px}
+  .panel h4 .hint{margin-left:auto;font-size:11px;color:var(--ink-soft);font-weight:500}
+
+  table.heat{border-collapse:separate;border-spacing:4px;width:100%;font-size:12.5px}
+  table.heat th{font-weight:600;color:var(--ink-soft);font-size:11px;text-align:center;padding:2px;text-transform:uppercase;letter-spacing:.03em}
+  table.heat th.obj{text-align:left}
+  table.heat td.obj{text-align:left;font-weight:650;font-size:12.5px;white-space:nowrap;padding-right:8px}
+  table.heat td.cell{text-align:center;border-radius:7px;padding:9px 4px;font-weight:700;font-family:var(--mono);font-size:12.5px}
+  .c-good{background:var(--good-bg);color:var(--good)}.c-warn{background:var(--warn-bg);color:var(--warn)}.c-crit{background:var(--crit-bg);color:var(--crit)}
+  .c-ovr{outline:2px solid var(--accent);outline-offset:-2px}
+  tr.hl td{background:var(--accent-soft)!important}
+  tr.hl td.obj{color:var(--accent)}
+
+  .bars{display:flex;flex-direction:column;gap:9px}
+  .bar{display:grid;grid-template-columns:150px 1fr 44px;align-items:center;gap:10px;font-size:12px}
+  .bar .name{color:var(--ink);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar .name small{color:var(--ink-soft);font-weight:500}
+  .track{height:9px;background:var(--line);border-radius:5px;overflow:hidden}.fill{height:100%;border-radius:5px}
+  .bar .pct{text-align:right;font-family:var(--mono);font-weight:700;font-size:12px}
+
+  .cde{width:100%;border-collapse:collapse;font-size:12.5px}
+  .cde th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft);font-weight:700;padding:0 10px 9px;border-bottom:1px solid var(--line)}
+  .cde td{padding:10px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
+  .cde tr:last-child td{border-bottom:none}
+  .cde .el{font-family:var(--mono);font-weight:600;color:var(--ink)}
+  .cde .sc{font-family:var(--mono);font-weight:700}
+  .badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;text-transform:uppercase;letter-spacing:.03em}
+  .b-crit{background:var(--crit-bg);color:var(--crit)}.b-warn{background:var(--warn-bg);color:var(--warn)}.b-info{background:var(--accent-soft);color:var(--accent)}
+  .mini{font-size:11px;color:var(--ink-soft)}
+
+  .gauge{display:flex;align-items:center;gap:18px}
+  .ring{width:118px;height:118px;border-radius:50%;flex:none;display:grid;place-items:center;position:relative}
+  .ring::after{content:"";position:absolute;inset:13px;background:var(--panel-2);border-radius:50%}
+  .ring .rc{position:relative;z-index:1;text-align:center}
+  .ring .rc .n{font-size:24px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .ring .rc .t{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);margin-top:3px}
+  .legend{display:flex;flex-direction:column;gap:8px;font-size:12px}
+  .legend .li{display:flex;align-items:center;gap:8px}.legend .sw{width:11px;height:11px;border-radius:3px;flex:none}.legend b{font-family:var(--mono)}
+  .spark{width:100%;height:78px;display:block}
+
+  /* nav rail */
+  .appshell{display:grid;grid-template-columns:186px 1fr;min-height:380px}
+  .rail{background:var(--panel-2);border-right:1px solid var(--line);padding:14px 12px}
+  .rail .brand{font-weight:800;font-size:13px;letter-spacing:-.01em;margin:2px 6px 16px;display:flex;align-items:center;gap:8px}
+  .rail .brand .sq{width:20px;height:20px;border-radius:6px;background:var(--accent);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:800}
+  .navi{display:flex;flex-direction:column;gap:3px}
+  .navi a{display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:8px;font-size:12.5px;color:var(--ink-soft);text-decoration:none;font-weight:600}
+  .navi a .gl{width:7px;height:7px;border-radius:2px;background:var(--line);flex:none}
+  .navi a.active{background:var(--accent-soft);color:var(--accent)}.navi a.active .gl{background:var(--accent)}
+  .navi .grp{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin:14px 8px 6px;font-weight:700;opacity:.8}
+  .stage{padding:16px}
+  .crumb{font-size:12px;color:var(--ink-soft);margin-bottom:14px;font-family:var(--mono)}.crumb b{color:var(--accent)}
+  .ocards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .ocard{background:var(--panel);border:1px solid var(--line-soft);border-radius:10px;padding:12px;position:relative}
+  .ocard.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .ocard .on{font-weight:700;font-size:13px;margin-bottom:8px}
+  .ocard .osc{font-size:22px;font-weight:800;font-family:var(--mono);letter-spacing:-.02em}
+  .ocard .om{font-size:11px;color:var(--ink-soft);margin-top:4px}
+
+  .annos{display:grid;grid-template-columns:1.6fr 1fr;gap:20px;margin-top:16px;align-items:start}
+  .note{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:0 10px 10px 0;padding:14px 16px}
+  .note.warn{border-left-color:var(--warn)}
+  .note h5{margin:0 0 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-weight:700}
+  .note.warn h5{color:var(--warn)}
+  .note ul{margin:0;padding-left:16px;font-size:13px;color:var(--ink-soft)}.note li{margin:5px 0}.note li b{color:var(--ink)}
+
+  .callout{background:var(--accent-soft);border:1px solid var(--accent);border-radius:12px;padding:16px 18px;margin-top:22px}
+  .callout p{margin:0;font-size:13.5px;color:var(--ink)}.callout b{color:var(--accent)}
+  .callout.warn{background:var(--warn-bg);border-color:var(--warn)}.callout.warn b{color:var(--warn)}
+
+  /* calculation cards */
+  .calcgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:14px}
+  .calccard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow)}
+  .calccard.full{grid-column:1/-1}
+  .calccard .cname{font-weight:750;font-size:14.5px;margin-bottom:3px;display:flex;align-items:center;gap:8px}
+  .calccard .ctag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);background:var(--accent-soft);padding:2px 7px;border-radius:5px}
+  .calccard .cdef{font-size:12.5px;color:var(--ink-soft);margin:6px 0 4px}
+  .flabel{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);font-weight:700;margin:12px 0 5px}
+  .formula{display:block;background:var(--panel-2);border:1px solid var(--line-soft);border-radius:7px;padding:9px 11px;font-family:var(--mono);font-size:11.5px;color:var(--ink);white-space:pre-wrap;line-height:1.55}
+  .formula .kw{color:var(--accent);font-weight:700}
+  .work{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);line-height:1.7;white-space:pre-wrap;margin-top:6px}
+  .work b{color:var(--ink)}
+  .result{margin-top:12px;padding-top:11px;border-top:1px dashed var(--line);font-size:23px;font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums}
+  .result small{font-size:12px;color:var(--ink-soft);font-weight:600}
+
+  /* dataset table */
+  details.ds{margin-top:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden}
+  details.ds summary{cursor:pointer;padding:14px 16px;font-weight:700;font-size:14px;background:var(--panel-2);list-style:none}
+  details.ds summary::-webkit-details-marker{display:none}
+  details.ds summary::before{content:"▸ ";color:var(--accent)}
+  details.ds[open] summary::before{content:"▾ "}
+  .dstable{width:100%;border-collapse:collapse;font-size:12px}
+  .dstable th{position:sticky;top:0;background:var(--panel);text-align:left;padding:9px 10px;border-bottom:2px solid var(--line);
+              font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);white-space:nowrap}
+  .dstable td{padding:8px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+  .dstable td.num{font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+  .dstable tr.objstart td{border-top:2px solid var(--line)}
+  .dstable td.el{font-family:var(--mono);color:var(--ink)}
+
+  .overflow{overflow-x:auto}
+  h3.rec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);margin:0 0 4px;font-weight:700}
+  .sect-lead{font-size:19px;font-weight:750;letter-spacing:-.01em;margin:2px 0 2px}
+
+  @media (max-width:860px){
+    .k6,.k5,.k4{grid-template-columns:repeat(2,1fr)}
+    .annos,.calcgrid{grid-template-columns:1fr}
+    .appshell{grid-template-columns:1fr}
+    .rail{border-right:none;border-bottom:1px solid var(--line);display:flex;gap:14px;overflow-x:auto}
+    .ocards{grid-template-columns:repeat(2,1fr)}
+    .row{grid-template-columns:1fr !important}
+    .canvas{padding:12px}
+  }
+</style><style>
+@page{ size:A3 landscape; margin:0; }
+html,body{ background:#fff; }
+.wrap{ max-width:100%; padding:0; margin:0; }
+.slide{ width:1587px; height:1122px; box-sizing:border-box; padding:40px 48px;
+  overflow:hidden; page-break-after:always; break-after:page; background:#fff; }
+.slide:last-child{ page-break-after:auto; break-after:auto; }
+.fit{ transform-origin:top left; }
+.slidehead{ font-size:17px; letter-spacing:.04em; text-transform:uppercase; color:var(--accent);
+  font-weight:800; margin:0 0 16px; padding-bottom:10px; border-bottom:2px solid var(--line); }
+.frame{ box-shadow:none; }
+</style></head><body><div class="wrap"><section class="slide"><div class="fit"><div class="slidehead">1 · Mock A — Executive Cockpit</div><div class="frame">
+      <div class="chrome"><span class="dots"><i></i><i></i><i></i></span>
+        <span class="ttl">Executive Data Quality Scorecard</span><span class="rt">Run #3 · 11 Jul 2026</span></div>
+      <div class="canvas">
+        <div class="kpis k6">
+          <div class="kpi"><span class="strip s-warn"></span><div class="lab">Overall DQ Score</div><div class="val tone-warn tnum">90.9%</div><div class="sub">▲ 2.9 vs Run #2</div></div>
+          <div class="kpi"><span class="strip s-warn"></span><div class="lab">Readiness</div><div class="val" style="font-size:17px;margin-top:6px"><span class="pill warn"><span class="dot"></span>Conditional</span></div><div class="sub">2 hard gates open</div></div>
+          <div class="kpi"><span class="strip s-crit"></span><div class="lab">Critical Failed Checks</div><div class="val tone-crit tnum">4M</div><div class="sub">severity = Critical</div></div>
+          <div class="kpi"><span class="strip s-acc"></span><div class="lab">Records Scanned</div><div class="val tnum">12.5M</div><div class="sub">4 objects · 21 CDEs</div></div>
+          <div class="kpi"><span class="strip s-acc"></span><div class="lab">Rule Coverage</div><div class="val tnum">87.5%</div><div class="sub">21 of 24 CDEs ruled</div></div>
+          <div class="kpi"><span class="strip s-good"></span><div class="lab">Auto-fixable</div><div class="val tone-good tnum">25.6%</div><div class="sub">1.74M of 6.81M checks</div></div>
+        </div>
+
+        <div class="row" style="grid-template-columns:1.55fr 1fr">
+          <div class="panel">
+            <h4>Object × Dimension Heatmap <span class="hint">% pass · click a row to drill →</span></h4>
+            <div class="overflow">
+            <table class="heat">
+              <thead><tr><th class="obj">Object</th><th>Complete</th><th>Validity</th><th>Format</th><th>Unique</th><th>Ref&nbsp;Int.</th><th>Rel'ship</th><th>Overall</th></tr></thead>
+              <tbody>
+                <tr><td class="obj">Customer</td><td class="cell c-good">96</td><td class="cell c-warn">91</td><td class="cell c-warn">88</td><td class="cell c-warn">94</td><td class="cell c-warn">90</td><td class="cell c-warn">93</td><td class="cell c-warn c-ovr">92</td></tr>
+                <tr class="hl"><td class="obj">Account ◂</td><td class="cell c-warn">89</td><td class="cell c-warn">92</td><td class="cell c-good">95</td><td class="cell c-warn">86</td><td class="cell c-crit">82</td><td class="cell c-crit">78</td><td class="cell c-warn c-ovr">87</td></tr>
+                <tr><td class="obj">Product</td><td class="cell c-good">98</td><td class="cell c-warn">94</td><td class="cell c-warn">94</td><td class="cell c-good">99</td><td class="cell c-good">96</td><td class="cell c-good">95</td><td class="cell c-good c-ovr">96</td></tr>
+                <tr><td class="obj">Price</td><td class="cell c-crit">84</td><td class="cell c-warn">88</td><td class="cell c-warn">91</td><td class="cell c-good">97</td><td class="cell c-crit">80</td><td class="cell c-crit">76</td><td class="cell c-warn c-ovr">86</td></tr>
+              </tbody>
+            </table>
+            </div>
+          </div>
+          <div class="panel">
+            <h4>Critical Failures by Dimension <span class="hint">4M total</span></h4>
+            <div class="gauge">
+              <div class="ring" style="background:conic-gradient(var(--crit) 0 40.1%,var(--warn) 40.1% 77.4%,var(--accent) 77.4% 100%)">
+                <div class="rc"><div class="n tnum">4M</div><div class="t">Critical</div></div>
+              </div>
+              <div class="legend">
+                <div class="li"><span class="sw" style="background:var(--crit)"></span>Relationship <b>&nbsp;1.6M · 40%</b></div>
+                <div class="li"><span class="sw" style="background:var(--warn)"></span>Ref. Integrity <b>&nbsp;1.49M · 37%</b></div>
+                <div class="li"><span class="sw" style="background:var(--accent)"></span>Completeness <b>&nbsp;905K · 23%</b></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="grid-template-columns:1fr 1fr 1fr">
+          <div class="panel">
+            <h4>Top Failing Data Elements</h4>
+            <div class="bars">
+              <div class="bar"><span class="name">product_id <small>Price·Rel</small></span><span class="track"><span class="fill" style="width:76%;background:var(--crit)"></span></span><span class="pct tone-crit">76%</span></div>
+              <div class="bar"><span class="name">parent_customer_id <small>Acct·Rel</small></span><span class="track"><span class="fill" style="width:78%;background:var(--crit)"></span></span><span class="pct tone-crit">78%</span></div>
+              <div class="bar"><span class="name">product_id <small>Price·RefInt</small></span><span class="track"><span class="fill" style="width:80%;background:var(--crit)"></span></span><span class="pct tone-crit">80%</span></div>
+              <div class="bar"><span class="name">customer_id <small>Acct·RefInt</small></span><span class="track"><span class="fill" style="width:82%;background:var(--crit)"></span></span><span class="pct tone-crit">82%</span></div>
+              <div class="bar"><span class="name">list_price <small>Price·Comp</small></span><span class="track"><span class="fill" style="width:84%;background:var(--crit)"></span></span><span class="pct tone-crit">84%</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h4>DQ Score Trend by Run</h4>
+            <svg class="spark" viewBox="0 0 260 78" preserveAspectRatio="none" aria-label="Trend 84 to 90.9">
+              <defs><linearGradient id="gA" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+              <path d="M6,58 L130,42 L254,22 L254,74 L6,74 Z" fill="url(#gA)"/>
+              <path d="M6,58 L130,42 L254,22" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
+              <circle cx="254" cy="22" r="4" fill="var(--accent)"/>
+              <text x="6" y="72" font-size="9" fill="var(--ink-soft)" font-family="monospace">R1 84.0</text>
+              <text x="205" y="18" font-size="9" fill="var(--accent)" font-family="monospace" font-weight="700">90.9</text>
+            </svg>
+          </div>
+          <div class="panel">
+            <h4>Fix Profile <span class="hint">of 6.81M checks</span></h4>
+            <div class="bars">
+              <div class="bar"><span class="name">Auto-fixable</span><span class="track"><span class="fill" style="width:25.6%;background:var(--good)"></span></span><span class="pct">25.6%</span></div>
+              <div class="bar"><span class="name">Manual</span><span class="track"><span class="fill" style="width:74.4%;background:var(--warn)"></span></span><span class="pct">74.4%</span></div>
+            </div>
+            <p class="mini" style="margin:12px 0 0">1.74M auto / 5.07M manual.</p>
+          </div>
+        </div>
+      </div>
+    </div></div></section><section class="slide"><div class="fit"><div class="slidehead">2 · Mock A — Drill-down · Object: Account</div><div class="frame">
+      <div class="chrome"><span class="dots"><i></i><i></i><i></i></span>
+        <span class="ttl">◂ Back to Scorecard&nbsp;&nbsp;/&nbsp;&nbsp;Object: Account</span><span class="rt">87.0% overall</span></div>
+      <div class="canvas">
+        <div class="kpis k4" style="margin-bottom:12px">
+          <div class="kpi"><span class="strip s-warn"></span><div class="lab">Account Object Score</div><div class="val tone-warn tnum">87.0%</div><div class="sub">13,050,000 / 15,000,000 checks</div></div>
+          <div class="kpi"><span class="strip s-crit"></span><div class="lab">Weakest Dimension</div><div class="val tone-crit" style="font-size:17px;margin-top:6px">Relationship</div><div class="sub">78.0% · parent_customer_id</div></div>
+          <div class="kpi"><span class="strip s-crit"></span><div class="lab">Critical CDEs Failing</div><div class="val tone-crit tnum">3</div><div class="sub">of 6 elements assessed</div></div>
+          <div class="kpi"><span class="strip s-acc"></span><div class="lab">Failing Checks</div><div class="val tnum">1.95M</div><div class="sub">13.0% of Account checks</div></div>
+        </div>
+        <div class="row" style="grid-template-columns:.9fr 1.6fr">
+          <div class="panel">
+            <h4>Dimension Breakdown</h4>
+            <div class="bars">
+              <div class="bar"><span class="name">Format</span><span class="track"><span class="fill" style="width:95%;background:var(--good)"></span></span><span class="pct tone-good">95%</span></div>
+              <div class="bar"><span class="name">Validity</span><span class="track"><span class="fill" style="width:92%;background:var(--warn)"></span></span><span class="pct tone-warn">92%</span></div>
+              <div class="bar"><span class="name">Completeness</span><span class="track"><span class="fill" style="width:89%;background:var(--warn)"></span></span><span class="pct tone-warn">89%</span></div>
+              <div class="bar"><span class="name">Uniqueness</span><span class="track"><span class="fill" style="width:86%;background:var(--warn)"></span></span><span class="pct tone-warn">86%</span></div>
+              <div class="bar"><span class="name">Ref. Integrity</span><span class="track"><span class="fill" style="width:82%;background:var(--crit)"></span></span><span class="pct tone-crit">82%</span></div>
+              <div class="bar"><span class="name">Relationship</span><span class="track"><span class="fill" style="width:78%;background:var(--crit)"></span></span><span class="pct tone-crit">78%</span></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h4>Account · Critical Data Elements <span class="hint">element → dimension → rule → score</span></h4>
+            <div class="overflow">
+            <table class="cde">
+              <thead><tr><th>Element</th><th>Dimension</th><th>Score</th><th>Failed</th><th>Severity</th><th>Fix</th></tr></thead>
+              <tbody>
+                <tr><td class="el">parent_customer_id</td><td>Relationship</td><td class="sc tone-crit">78.0%</td><td class="tnum">550,000</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">customer_id</td><td>Ref. Integrity</td><td class="sc tone-crit">82.0%</td><td class="tnum">450,000</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">sbg_id</td><td>Uniqueness</td><td class="sc tone-warn">86.0%</td><td class="tnum">350,000</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td></tr>
+                <tr><td class="el">account_name</td><td>Completeness</td><td class="sc tone-warn">89.0%</td><td class="tnum">275,000</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">region_code</td><td>Validity</td><td class="sc tone-warn">92.0%</td><td class="tnum">200,000</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">eff_date</td><td>Format</td><td class="sc tone-good">95.0%</td><td class="tnum">125,000</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td></tr>
+              </tbody>
+            </table>
+            </div>
+          </div>
+        </div>
+        <p class="mini" style="margin-top:10px">Drill maths: Object score 1,950,000 failed / 15,000,000 checks → 13.0% fail → <b>87.0% pass</b>.
+          The 6 dimension bars are the six Account rows from the dataset. This same object view is Mock B's Layer 2.</p>
+      </div>
+    </div></div></section><section class="slide"><div class="fit"><div class="slidehead">3 · Mock B — Layer 1 · Executive landing</div><div class="frame">
+      <div class="appshell">
+        <aside class="rail">
+          <div class="brand"><span class="sq">Q</span> DQ Framework</div>
+          <div class="navi">
+            <div class="grp">Layer 1 · Executive</div>
+            <a href="#" class="active"><span class="gl"></span>Readiness Scorecard</a>
+            <div class="grp">Layer 2 · Object</div>
+            <a href="#"><span class="gl"></span>Customer</a>
+            <a href="#"><span class="gl"></span>Account&nbsp;<span style="margin-left:auto" class="tone-crit">●</span></a>
+            <a href="#"><span class="gl"></span>Product</a>
+            <a href="#"><span class="gl"></span>Price&nbsp;<span style="margin-left:auto" class="tone-crit">●</span></a>
+            <div class="grp">Layer 3 · Element</div>
+            <a href="#"><span class="gl"></span>CDE &amp; rule detail</a>
+          </div>
+        </aside>
+        <div class="stage">
+          <div class="crumb"><b>Executive</b></div>
+          <div class="kpis k5" style="margin-bottom:12px">
+            <div class="kpi"><span class="strip s-warn"></span><div class="lab">Overall DQ</div><div class="val tone-warn tnum">90.9%</div></div>
+            <div class="kpi"><span class="strip s-warn"></span><div class="lab">Readiness</div><div class="val" style="font-size:14px;margin-top:7px"><span class="pill warn"><span class="dot"></span>Conditional</span></div></div>
+            <div class="kpi"><span class="strip s-crit"></span><div class="lab">Critical Failed</div><div class="val tone-crit tnum">4M</div></div>
+            <div class="kpi"><span class="strip s-acc"></span><div class="lab">Scanned</div><div class="val tnum">12.5M</div></div>
+            <div class="kpi"><span class="strip s-good"></span><div class="lab">Auto-fix</div><div class="val tone-good tnum">25.6%</div></div>
+          </div>
+          <div class="panel">
+            <h4>Object Overall Scores <span class="hint">click an object → Layer 2</span></h4>
+            <div class="ocards">
+              <div class="ocard"><div class="on">Customer</div><div class="osc tone-warn">92</div><div class="om">6 CDEs · 0 red</div></div>
+              <div class="ocard sel"><div class="on">Account</div><div class="osc tone-warn">87</div><div class="om">6 CDEs · 2 red ◂</div></div>
+              <div class="ocard"><div class="on">Product</div><div class="osc tone-good">96</div><div class="om">6 CDEs · 0 red</div></div>
+              <div class="ocard"><div class="on">Price</div><div class="osc tone-warn">86</div><div class="om">6 CDEs · 3 red</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div></div></section><section class="slide"><div class="fit"><div class="slidehead">4 · Mock B — Layer 2 · Object health (Account)</div><div class="frame">
+      <div class="appshell">
+        <aside class="rail">
+          <div class="brand"><span class="sq">Q</span> DQ Framework</div>
+          <div class="navi">
+            <div class="grp">Layer 1 · Executive</div>
+            <a href="#"><span class="gl"></span>Readiness Scorecard</a>
+            <div class="grp">Layer 2 · Object</div>
+            <a href="#"><span class="gl"></span>Customer</a>
+            <a href="#" class="active"><span class="gl"></span>Account</a>
+            <a href="#"><span class="gl"></span>Product</a>
+            <a href="#"><span class="gl"></span>Price</a>
+            <div class="grp">Layer 3 · Element</div>
+            <a href="#"><span class="gl"></span>CDE &amp; rule detail</a>
+          </div>
+        </aside>
+        <div class="stage">
+          <div class="crumb">Executive&nbsp;›&nbsp;<b>Account</b></div>
+          <div class="kpis k5" style="margin-bottom:12px">
+            <div class="kpi"><span class="strip s-warn"></span><div class="lab">Object Score</div><div class="val tone-warn tnum">87.0%</div></div>
+            <div class="kpi"><span class="strip s-crit"></span><div class="lab">Weakest Dim.</div><div class="val tone-crit" style="font-size:15px;margin-top:7px">Relationship</div><div class="sub">78.0%</div></div>
+            <div class="kpi"><span class="strip s-crit"></span><div class="lab">Critical CDEs</div><div class="val tone-crit tnum">3</div><div class="sub">of 6</div></div>
+            <div class="kpi"><span class="strip s-acc"></span><div class="lab">Failing Checks</div><div class="val tnum">1.95M</div></div>
+            <div class="kpi"><span class="strip s-warn"></span><div class="lab">Owner</div><div class="val" style="font-size:14px;margin-top:7px">Integration</div></div>
+          </div>
+          <div class="panel">
+            <h4>Account · Critical Data Elements <span class="hint">click a row → Layer 3</span></h4>
+            <div class="overflow">
+            <table class="cde">
+              <thead><tr><th>Element</th><th>Dimension</th><th>Rule</th><th>Score</th><th>Failed</th><th>Severity</th><th>Fix</th></tr></thead>
+              <tbody>
+                <tr class="hl"><td class="el">parent_customer_id ◂</td><td>Relationship</td><td class="mini">parent exists</td><td class="sc tone-crit">78.0%</td><td class="tnum">550,000</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">customer_id</td><td>Ref. Integrity</td><td class="mini">FK in Customer</td><td class="sc tone-crit">82.0%</td><td class="tnum">450,000</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">sbg_id</td><td>Uniqueness</td><td class="mini">unique key</td><td class="sc tone-warn">86.0%</td><td class="tnum">350,000</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td></tr>
+                <tr><td class="el">account_name</td><td>Completeness</td><td class="mini">not null</td><td class="sc tone-warn">89.0%</td><td class="tnum">275,000</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">region_code</td><td>Validity</td><td class="mini">allowed values</td><td class="sc tone-warn">92.0%</td><td class="tnum">200,000</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Manual</td></tr>
+                <tr><td class="el">eff_date</td><td>Format</td><td class="mini">date &amp; end&gt;eff</td><td class="sc tone-good">95.0%</td><td class="tnum">125,000</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td></tr>
+              </tbody>
+            </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div></div></section><section class="slide"><div class="fit"><div class="slidehead">5 · Mock B — Layer 3 · Element deep-dive (parent_customer_id)</div><div class="frame">
+      <div class="appshell">
+        <aside class="rail">
+          <div class="brand"><span class="sq">Q</span> DQ Framework</div>
+          <div class="navi">
+            <div class="grp">Layer 1 · Executive</div>
+            <a href="#"><span class="gl"></span>Readiness Scorecard</a>
+            <div class="grp">Layer 2 · Object</div>
+            <a href="#"><span class="gl"></span>Account</a>
+            <div class="grp">Layer 3 · Element</div>
+            <a href="#" class="active"><span class="gl"></span>parent_customer_id</a>
+            <a href="#"><span class="gl"></span>customer_id</a>
+            <a href="#"><span class="gl"></span>account_name</a>
+          </div>
+        </aside>
+        <div class="stage">
+          <div class="crumb">Executive&nbsp;›&nbsp;Account&nbsp;›&nbsp;<b>parent_customer_id</b></div>
+          <div class="kpis k4" style="margin-bottom:12px">
+            <div class="kpi"><span class="strip s-crit"></span><div class="lab">Element Score</div><div class="val tone-crit tnum">78.0%</div><div class="sub">1,950,000 / 2,500,000 pass</div></div>
+            <div class="kpi"><span class="strip s-crit"></span><div class="lab">Failed Records</div><div class="val tone-crit tnum">550,000</div><div class="sub">22.0% of rows</div></div>
+            <div class="kpi"><span class="strip s-warn"></span><div class="lab">Gap to Target</div><div class="val tone-warn tnum">−17</div><div class="sub">pts below 95% SLA</div></div>
+            <div class="kpi"><span class="strip s-acc"></span><div class="lab">Severity / Fix</div><div class="val" style="font-size:14px;margin-top:7px"><span class="badge b-crit">Critical</span></div><div class="sub">Manual · Integration</div></div>
+          </div>
+          <div class="row" style="grid-template-columns:1fr 1fr">
+            <div class="panel">
+              <h4>Rule Definition</h4>
+              <table class="cde"><tbody>
+                <tr><td class="mini">Rule</td><td class="el">parent_customer_id must exist in Customer</td></tr>
+                <tr><td class="mini">Dimension</td><td>Relationship Integrity</td></tr>
+                <tr><td class="mini">Type</td><td class="el">ref_integrity</td></tr>
+                <tr><td class="mini">Checked / Failed</td><td class="tnum">2,500,000 / 550,000</td></tr>
+                <tr><td class="mini">Est. fix</td><td>5 min/record · Manual</td></tr>
+              </tbody></table>
+              <p class="mini" style="margin-top:10px">This is a <b>hard gate</b> in Mock C's readiness model — orphan parents break migration sequencing.</p>
+            </div>
+            <div class="panel">
+              <h4>Failed Record Sample <span class="hint">drill to the row</span></h4>
+              <div class="overflow">
+              <table class="cde">
+                <thead><tr><th>sbg_id</th><th>parent_customer_id</th><th>Issue</th></tr></thead>
+                <tbody>
+                  <tr><td class="el">ACC-10241</td><td class="el">CUST-88301</td><td><span class="badge b-crit">no parent</span></td></tr>
+                  <tr><td class="el">ACC-10255</td><td class="el">CUST-90114</td><td><span class="badge b-crit">no parent</span></td></tr>
+                  <tr><td class="el">ACC-10388</td><td class="el">(null)</td><td><span class="badge b-warn">missing FK</span></td></tr>
+                  <tr><td class="el">ACC-10402</td><td class="el">CUST-77052</td><td><span class="badge b-crit">no parent</span></td></tr>
+                </tbody>
+              </table>
+              </div>
+              <p class="mini" style="margin-top:10px">+ 549,960 more · export to remediation queue.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div></div></section><section class="slide"><div class="fit"><div class="slidehead">6 · Sample dataset · 24 rules · 12,500,000 rows</div><div class="frame"><div class="canvas"><div class="overflow"><table class="dstable">
+        <thead><tr><th>Object</th><th>Rows</th><th>Element (CDE)</th><th>Dimension</th><th>Rule</th>
+          <th>Checked</th><th>Failed</th><th>Passed</th><th>Score</th><th>Severity</th><th>Fix</th><th>Min/rec</th></tr></thead>
+        <tbody>
+          <tr class="objstart"><td rowspan="6"><b>Customer</b></td><td class="num">4,000,000</td><td class="el">customer_name</td><td>Completeness</td><td class="mini">not null</td><td class="num">4,000,000</td><td class="num">160,000</td><td class="num">3,840,000</td><td class="num tone-good">96.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">3</td></tr>
+          <tr><td class="num">4,000,000</td><td class="el">status</td><td>Validity</td><td class="mini">allowed values</td><td class="num">4,000,000</td><td class="num">360,000</td><td class="num">3,640,000</td><td class="num tone-warn">91.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Manual</td><td class="num">1</td></tr>
+          <tr><td class="num">4,000,000</td><td class="el">email</td><td>Format</td><td class="mini">email regex</td><td class="num">4,000,000</td><td class="num">480,000</td><td class="num">3,520,000</td><td class="num tone-warn">88.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">4,000,000</td><td class="el">email</td><td>Uniqueness</td><td class="mini">no dup email</td><td class="num">4,000,000</td><td class="num">240,000</td><td class="num">3,760,000</td><td class="num tone-warn">94.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">4,000,000</td><td class="el">sbg_id</td><td>Ref Integrity</td><td class="mini">FK in Account</td><td class="num">4,000,000</td><td class="num">400,000</td><td class="num">3,600,000</td><td class="num tone-warn">90.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">4</td></tr>
+          <tr><td class="num">4,000,000</td><td class="el">customer_id</td><td>Relationship</td><td class="mini">has ≥1 unit</td><td class="num">4,000,000</td><td class="num">280,000</td><td class="num">3,720,000</td><td class="num tone-warn">93.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">5</td></tr>
+
+          <tr class="objstart"><td rowspan="6"><b>Account</b></td><td class="num">2,500,000</td><td class="el">account_name</td><td>Completeness</td><td class="mini">not null</td><td class="num">2,500,000</td><td class="num">275,000</td><td class="num">2,225,000</td><td class="num tone-warn">89.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">3</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">region_code</td><td>Validity</td><td class="mini">allowed values</td><td class="num">2,500,000</td><td class="num">200,000</td><td class="num">2,300,000</td><td class="num tone-warn">92.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Manual</td><td class="num">1</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">eff_date</td><td>Format</td><td class="mini">date &amp; end&gt;eff</td><td class="num">2,500,000</td><td class="num">125,000</td><td class="num">2,375,000</td><td class="num tone-good">95.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">sbg_id</td><td>Uniqueness</td><td class="mini">unique key</td><td class="num">2,500,000</td><td class="num">350,000</td><td class="num">2,150,000</td><td class="num tone-warn">86.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">customer_id</td><td>Ref Integrity</td><td class="mini">FK in Customer</td><td class="num">2,500,000</td><td class="num">450,000</td><td class="num">2,050,000</td><td class="num tone-crit">82.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">4</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">parent_customer_id</td><td>Relationship</td><td class="mini">parent exists</td><td class="num">2,500,000</td><td class="num">550,000</td><td class="num">1,950,000</td><td class="num tone-crit">78.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">5</td></tr>
+
+          <tr class="objstart"><td rowspan="6"><b>Product</b></td><td class="num">3,500,000</td><td class="el">product_name</td><td>Completeness</td><td class="mini">not null</td><td class="num">3,500,000</td><td class="num">70,000</td><td class="num">3,430,000</td><td class="num tone-good">98.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">3</td></tr>
+          <tr><td class="num">3,500,000</td><td class="el">status</td><td>Validity</td><td class="mini">allowed values</td><td class="num">3,500,000</td><td class="num">210,000</td><td class="num">3,290,000</td><td class="num tone-warn">94.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Manual</td><td class="num">1</td></tr>
+          <tr><td class="num">3,500,000</td><td class="el">product_code</td><td>Format</td><td class="mini">code pattern</td><td class="num">3,500,000</td><td class="num">210,000</td><td class="num">3,290,000</td><td class="num tone-warn">94.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">3,500,000</td><td class="el">product_id</td><td>Uniqueness</td><td class="mini">unique</td><td class="num">3,500,000</td><td class="num">35,000</td><td class="num">3,465,000</td><td class="num tone-good">99.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">3,500,000</td><td class="el">sbg_id</td><td>Ref Integrity</td><td class="mini">FK in Account</td><td class="num">3,500,000</td><td class="num">140,000</td><td class="num">3,360,000</td><td class="num tone-good">96.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">4</td></tr>
+          <tr><td class="num">3,500,000</td><td class="el">product_id</td><td>Relationship</td><td class="mini">has ≥1 price</td><td class="num">3,500,000</td><td class="num">175,000</td><td class="num">3,325,000</td><td class="num tone-good">95.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">5</td></tr>
+
+          <tr class="objstart"><td rowspan="6"><b>Price</b></td><td class="num">2,500,000</td><td class="el">list_price</td><td>Completeness</td><td class="mini">not null</td><td class="num">2,500,000</td><td class="num">400,000</td><td class="num">2,100,000</td><td class="num tone-crit">84.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">3</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">discount_pct</td><td>Validity</td><td class="mini">0–100 range</td><td class="num">2,500,000</td><td class="num">300,000</td><td class="num">2,200,000</td><td class="num tone-warn">88.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Manual</td><td class="num">1</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">currency_code</td><td>Format</td><td class="mini">ISO 4217</td><td class="num">2,500,000</td><td class="num">225,000</td><td class="num">2,275,000</td><td class="num tone-warn">91.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">price_id</td><td>Uniqueness</td><td class="mini">unique</td><td class="num">2,500,000</td><td class="num">75,000</td><td class="num">2,425,000</td><td class="num tone-good">97.0%</td><td><span class="badge b-warn">Warning</span></td><td class="mini">Auto</td><td class="num">0.5</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">product_id</td><td>Ref Integrity</td><td class="mini">FK in Product</td><td class="num">2,500,000</td><td class="num">500,000</td><td class="num">2,000,000</td><td class="num tone-crit">80.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">4</td></tr>
+          <tr><td class="num">2,500,000</td><td class="el">product_id</td><td>Relationship</td><td class="mini">active↔active</td><td class="num">2,500,000</td><td class="num">600,000</td><td class="num">1,900,000</td><td class="num tone-crit">76.0%</td><td><span class="badge b-crit">Critical</span></td><td class="mini">Manual</td><td class="num">5</td></tr>
+        </tbody>
+        <tfoot><tr style="font-weight:700"><td>TOTAL</td><td class="num">12,500,000</td><td colspan="3" class="mini">24 rules · 21 CDEs</td><td class="num">75,000,000</td><td class="num">6,810,000</td><td class="num">68,190,000</td><td class="num tone-warn">90.9%</td><td colspan="3"></td></tr></tfoot>
+      </table></div></div></div></div></section></div><script>
+window.addEventListener('load',function(){
+  document.querySelectorAll('.slide').forEach(function(s){
+    var cs=getComputedStyle(s);
+    var availW=s.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);
+    var availH=s.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
+    var fit=s.querySelector('.fit'); fit.style.width=availW+'px';
+    var scale=Math.min(availW/fit.scrollWidth, availH/fit.scrollHeight, 1);
+    fit.style.transform='scale('+scale+')';
+  });
+});
+</script></body></html>
