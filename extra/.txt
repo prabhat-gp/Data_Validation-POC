@@ -475,3 +475,46 @@ KEY V1 DESIGN PRINCIPLES
 8. Approved rules automatically run in future validations.
 9. Dashboard reads DQ_METRIC and DQ_VIOLATION directly.
 10. Focus strictly on validation and violation reporting.
+
+======================================================================
+ONITY CDE CROSS-CHECK
+======================================================================
+Expected CDEs : 29
+Matched       : 16
+Missing       : 13
+Coverage      : 55.2%
+
+MATCHED
+----------------------------------------------------------------------
+BillingCity                    --> BillingCity
+BillingCountry                 --> BillingCountry
+BillingPostalCode              --> BillingPostalCode
+BillingState                   --> BillingState
+BillingStreet                  --> BillingStreet
+Industry                       --> Industry
+Name                           --> Name
+Phone                          --> Phone
+ShippingCity                   --> ShippingCity
+ShippingCountry                --> ShippingCountry
+ShippingPostalCode             --> ShippingPostalCode
+ShippingState                  --> ShippingState
+ShippingStreet                 --> ShippingStreet
+Type                           --> Type
+Website                        --> Website
+Region__c                      --> Region__c
+
+MISSING
+----------------------------------------------------------------------
+Key_Account__c
+Product_Line__c
+Sub_Region__c
+Hotel Chain
+Hotel Brand
+Hirarchy Type
+GBE__c
+Brand2__c
+Brand__c
+Account_Status__c
+Sales_Region__c
+SBU__c
+SBX__c
