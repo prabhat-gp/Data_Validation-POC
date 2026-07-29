@@ -31,6 +31,8 @@ DIMENSION_BY_RULE_TYPE = {
     "max_length": "Format",
     "unique": "Uniqueness",
     "conditional_required": "Consistency",
+    "ref_integrity": "Ref Integrity",
+    "multi_condition": "Consistency",
 }
 
 

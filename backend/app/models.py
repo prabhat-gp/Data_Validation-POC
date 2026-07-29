@@ -135,6 +135,33 @@ class DQMetric(Base):
     )
 
 
+class DQReferenceValue(Base):
+    """
+    Supports the Referential Integrity rule type. stg_source_record is
+    cleared after every run (runtime-only, by design) -- so a rule on
+    Object B can't JOIN directly against Object A's staged rows, because
+    they may already be gone. Instead, we persist just the DISTINCT values
+    of whichever element is actually targeted by an approved ref_integrity
+    rule (refreshed at the end of each run for that object) -- a small,
+    bounded, indexed lookup, not a copy of the source data.
+
+    Bootstrapping note: a ref_integrity rule sees whatever was captured by
+    the REFERENCED object's most recent completed run. If that object has
+    never been validated, the reference set is empty and the rule will
+    fail every row until the referenced object runs at least once.
+    """
+    __tablename__ = "dq_reference_value"
+
+    id = Column(Integer, primary_key=True)
+    object_id = Column(Integer, ForeignKey("dq_object.object_id"), nullable=False)
+    element_id = Column(Integer, ForeignKey("dq_element.element_id"), nullable=False)
+    value = Column(Text, nullable=False)
+
+    __table_args__ = (
+        Index("ix_refval_lookup", "object_id", "element_id", "value"),
+    )
+
+
 # STG_SOURCE_RECORD -- runtime only. One physical column per CDE (V1 has a
 # single object, so this stays a flat, explicit table rather than a dynamic
 # one). Cleared after every run; never a permanent store.

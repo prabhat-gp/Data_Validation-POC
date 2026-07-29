@@ -81,7 +81,18 @@ export interface DqObject {
   active_flag: boolean;
 }
 
+export interface DashboardSummary {
+  kpis: Kpis;
+  heatmap: HeatmapRow[];
+  top_failing: TopFailingItem[];
+  trend: TrendPoint[];
+  fix_profile: FixProfile;
+  critical_by_dimension: CriticalByDimension;
+}
+
 export const api = {
+  /** One round trip for the whole overview page (replaces 6 separate calls). */
+  summary: () => get<DashboardSummary>("/api/dashboard/summary"),
   kpis: () => get<Kpis>("/api/dashboard/kpis"),
   heatmap: () => get<HeatmapRow[]>("/api/dashboard/heatmap"),
   topFailing: (limit = 5) => get<TopFailingItem[]>(`/api/dashboard/top-failing?limit=${limit}`),

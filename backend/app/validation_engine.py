@@ -26,8 +26,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .models import DQRun, DQRule, DQElement, DQObject, DQViolation, DQMetric
-from .rule_compiler import compile_rule, RuleCompileError
+from .models import DQRun, DQRule, DQElement, DQObject, DQViolation, DQMetric, DQReferenceValue
+from .rule_compiler import compile_rule, RuleCompileError, assert_safe_identifier
 from . import ingestion
 
 VIOLATION_BATCH_SIZE = 5000
@@ -123,7 +123,50 @@ def _reason_for(rule_type: str, col: str) -> str:
         "format_pattern": f"{col} does not match the expected format",
         "max_length": f"{col} exceeds the maximum allowed length",
         "conditional_required": f"{col} is required given another field's value",
+        "ref_integrity": f"{col} does not exist in the referenced object",
+        "multi_condition": f"{col} failed a multi-condition business rule",
     }.get(rule_type, f"{col} failed validation")
+
+
+def _refresh_reference_values(db: Session, object_id: int, run_id: int):
+    """
+    Runs after this object's rules have executed. Refreshes
+    dq_reference_value ONLY for elements that some approved ref_integrity
+    rule (anywhere in the system) actually targets -- bounded work, not
+    "capture all 16 CDEs on every run regardless of whether anyone needs
+    them." One DISTINCT query per targeted element, still query-centric.
+    """
+    ref_rules = (
+        db.query(DQRule)
+        .filter(DQRule.rule_type == "ref_integrity", DQRule.status == "approved")
+        .all()
+    )
+    needed_element_ids = set()
+    for r in ref_rules:
+        cfg = json.loads(r.rule_config_json) if r.rule_config_json else {}
+        if cfg.get("ref_object_id") == object_id and cfg.get("ref_element_id"):
+            needed_element_ids.add(cfg["ref_element_id"])
+
+    for element_id in needed_element_ids:
+        element = db.get(DQElement, element_id)
+        if element is None:
+            continue
+        col = assert_safe_identifier(element.source_column_name)
+        db.execute(
+            text("DELETE FROM dq_reference_value WHERE object_id = :oid AND element_id = :eid"),
+            {"oid": object_id, "eid": element_id},
+        )
+        db.execute(
+            text(
+                f"INSERT INTO dq_reference_value (object_id, element_id, value) "
+                f"SELECT :oid, :eid, {col} FROM stg_source_record "
+                f"WHERE run_id = :run_id AND {col} IS NOT NULL AND TRIM({col}) <> '' "
+                f"GROUP BY {col}"
+            ),
+            {"oid": object_id, "eid": element_id, "run_id": run_id},
+        )
+    if needed_element_ids:
+        db.commit()
 
 
 def run_validation(
@@ -189,7 +232,12 @@ def run_validation(
             ))
             db.commit()   # one commit per rule -- partial progress survives a crash
 
-        # 4. Staging is runtime-only -- clear it now that metrics are written
+        # 4. Refresh persisted reference values for any element other objects'
+        #    ref_integrity rules depend on -- must happen BEFORE staging is
+        #    cleared, since this is the only place those values are read from.
+        _refresh_reference_values(db, run.object_id, run_id)
+
+        # 5. Staging is runtime-only -- clear it now that metrics are written
         ingestion.clear_staging(db, run_id)
 
         run.status = "completed"

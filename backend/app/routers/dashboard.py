@@ -34,19 +34,43 @@ def _latest_completed_run(db: Session, object_id: Optional[int] = None) -> Optio
 
 def _current_state(db: Session):
     """
-    One row per active object: its latest completed run + that run's
-    metrics. This is "the current state of the whole database" the overview
-    page reads -- every object contributes its own most recent pass.
+    One row per active object: its latest completed run + that run's metrics.
+
+    Fixed at 3 queries regardless of how many objects exist. The previous
+    version issued 1 + 2N queries (a run lookup and a metrics lookup per
+    object) and every dashboard endpoint called it -- so a single page load
+    fanned out into dozens of round-trips. Fine on demo data, wasteful at
+    real scale.
     """
     objects = db.query(DQObject).filter(DQObject.active_flag == True).all()  # noqa: E712
-    state = []
-    for obj in objects:
-        run = _latest_completed_run(db, obj.object_id)
-        if run is None:
-            continue
-        metrics = db.query(DQMetric).filter(DQMetric.run_id == run.run_id).all()
-        state.append({"object": obj, "run": run, "metrics": metrics})
-    return state
+    if not objects:
+        return []
+    obj_by_id = {o.object_id: o for o in objects}
+
+    # 1 query: every completed run, newest first -> keep the first per object
+    runs = (
+        db.query(DQRun)
+        .filter(DQRun.status == "completed", DQRun.object_id.in_(obj_by_id.keys()))
+        .order_by(DQRun.finished_at.desc())
+        .all()
+    )
+    latest: dict[int, DQRun] = {}
+    for r in runs:
+        latest.setdefault(r.object_id, r)
+    if not latest:
+        return []
+
+    # 1 query: all metrics for just those runs, grouped in memory
+    run_ids = [r.run_id for r in latest.values()]
+    all_metrics = db.query(DQMetric).filter(DQMetric.run_id.in_(run_ids)).all()
+    by_run: dict[int, list] = {}
+    for m in all_metrics:
+        by_run.setdefault(m.run_id, []).append(m)
+
+    return [
+        {"object": obj_by_id[oid], "run": run, "metrics": by_run.get(run.run_id, [])}
+        for oid, run in latest.items()
+    ]
 
 
 @router.get("/kpis")
@@ -108,10 +132,11 @@ def heatmap(db: Session = Depends(get_db)):
 @router.get("/top-failing")
 def top_failing(limit: int = 5, db: Session = Depends(get_db)):
     state = _current_state(db)
+    # one query for every element name we might need, instead of one per object
+    names = {e.element_id: e.element_name for e in db.query(DQElement).all()}
     items = []
     for s in state:
-        elements = {e.element_id: e.element_name for e in
-                    db.query(DQElement).filter(DQElement.object_id == s["object"].object_id)}
+        elements = names
         for m in s["metrics"]:
             if m.records_failed > 0:
                 items.append({
@@ -131,24 +156,28 @@ def trend(limit: int = 10, db: Session = Depends(get_db)):
     object -- each object validates on its own run_id, but they share a
     logical run sequence for the whole-database trend line.
     """
-    objects = db.query(DQObject).filter(DQObject.active_flag == True).all()  # noqa: E712
+    runs = (
+        db.query(DQRun)
+        .filter(DQRun.status == "completed")
+        .order_by(DQRun.finished_at.desc())
+        .all()
+    )
+    if not runs:
+        return []
+    metrics_by_run: dict[int, list] = {}
+    for m in db.query(DQMetric).filter(DQMetric.run_id.in_([r.run_id for r in runs])).all():
+        metrics_by_run.setdefault(m.run_id, []).append(m)
+
     by_name: dict[str, dict] = {}
-    for obj in objects:
-        runs = (
-            db.query(DQRun)
-            .filter(DQRun.object_id == obj.object_id, DQRun.status == "completed")
-            .order_by(DQRun.finished_at.desc())
-            .limit(limit)
-            .all()
-        )
-        for run in runs:
-            key = run.run_name or f"run-{run.run_id}"
-            bucket = by_name.setdefault(key, {"checked": 0, "failed": 0, "critical_failed": 0, "order": run.run_id})
-            metrics = db.query(DQMetric).filter(DQMetric.run_id == run.run_id).all()
-            bucket["checked"] += sum(m.records_checked for m in metrics)
-            bucket["failed"] += sum(m.records_failed for m in metrics)
-            bucket["critical_failed"] += sum(m.records_failed for m in metrics if m.severity == "Critical")
-            bucket["order"] = min(bucket["order"], run.run_id)
+    for run in runs:
+        key = run.run_name or f"run-{run.run_id}"
+        bucket = by_name.setdefault(key, {"checked": 0, "failed": 0, "critical_failed": 0, "order": run.run_id})
+        for m in metrics_by_run.get(run.run_id, []):
+            bucket["checked"] += m.records_checked
+            bucket["failed"] += m.records_failed
+            if m.severity == "Critical":
+                bucket["critical_failed"] += m.records_failed
+        bucket["order"] = min(bucket["order"], run.run_id)
 
     out = []
     for name, b in sorted(by_name.items(), key=lambda kv: kv[1]["order"]):
@@ -237,4 +266,28 @@ def object_drilldown(object_id: int, run_id: Optional[int] = None, db: Session =
         "run_id": run.run_id, "object_id": object_id, "object_name": obj.object_name,
         "overall_score": overall, "elements_checked": len(rows), "records_scanned": run.records_scanned,
         "dimension_scores": dimension_scores, "elements": elements,
+    }
+
+
+@router.get("/summary")
+def summary(top_limit: int = 5, db: Session = Depends(get_db)):
+    """
+    Everything the overview page needs, in ONE request.
+
+    The page previously fired six separate calls, each of which independently
+    rebuilt the same state -- six round trips and six duplicate query sets for
+    one screen. This composes the existing endpoint functions instead of
+    duplicating their logic, so there is still a single source of truth for
+    each calculation.
+    """
+    state = _current_state(db)
+    if not state:
+        raise HTTPException(404, "no completed runs found for any object")
+    return {
+        "kpis": kpis(db),
+        "heatmap": heatmap(db),
+        "top_failing": top_failing(top_limit, db),
+        "trend": trend(10, db),
+        "fix_profile": fix_profile(db),
+        "critical_by_dimension": critical_by_dimension(db),
     }

@@ -9,11 +9,12 @@ interface Segment {
 const PALETTE = ["var(--crit)", "var(--warn)", "var(--accent)", "#9333ea", "var(--good)"];
 
 export default function DonutChart({
-  segments, centerValue, centerLabel,
+  segments, centerValue, centerLabel, vertical = false,
 }: {
   segments: { label: string; value: number }[];
   centerValue: string;
   centerLabel: string;
+  vertical?: boolean;
 }) {
   const total = segments.reduce((a, s) => a + s.value, 0) || 1;
   let acc = 0;
@@ -27,7 +28,7 @@ export default function DonutChart({
   });
 
   return (
-    <div className="gauge">
+    <div className={`gauge ${vertical ? "vertical" : ""}`}>
       <div className="ring" style={{ background: `conic-gradient(${stops.join(",")})` }}>
         <div className="rc">
           <div className="n tabular-nums">{centerValue}</div>
@@ -38,7 +39,7 @@ export default function DonutChart({
         {withColor.map((s) => (
           <div className="li" key={s.label}>
             <span className="sw" style={{ background: s.color }} />
-            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</span>
+            <span className="ln">{s.label}</span>
             <b>{fmt(s.value)} · {Math.round((s.value / total) * 100)}%</b>
           </div>
         ))}

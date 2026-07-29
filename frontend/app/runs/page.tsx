@@ -32,48 +32,51 @@ export default function RunsPage() {
   }
 
   return (
-    <main className="max-w-4xl mx-auto py-10 px-6 space-y-8">
-      <h1 className="text-2xl font-bold">Validation Runs</h1>
-
-      <section className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
-        <h2 className="font-semibold">Trigger a run (CSV upload)</h2>
-        <input ref={fileRef} type="file" accept=".csv" className="text-sm" />
-        <button onClick={uploadAndRun} className="block px-4 py-2 rounded-lg bg-blue-600 text-white font-medium">
+    <>
+      <div className="topbar">
+        <div>
+          <h1>Validation Runs</h1>
+          <div className="sub">Upload a source file and watch the run complete</div>
+        </div>
+      </div>
+      <div className="content" style={{ maxWidth: 1000 }}>
+      <section className="card" style={{ marginBottom: 16 }}>
+        <h2>Trigger a run (CSV upload)</h2>
+        <input ref={fileRef} type="file" accept=".csv" style={{ fontSize: 13, marginBottom: 12 }} />
+        <button onClick={uploadAndRun} className="btn-primary">
           Upload &amp; Validate
         </button>
-        <p className="text-xs text-slate-400">
+        <p className="mini" style={{marginTop:12}}>
           DB-fetch source is available via POST /api/runs/db-fetch (connection string + query) -- no UI form for it yet.
         </p>
       </section>
 
-      <section className="bg-white rounded-xl border border-slate-200 p-5">
-        <h2 className="font-semibold mb-3">Run History</h2>
-        <table className="w-full text-sm">
+      <section className="card">
+        <h2>Run History</h2>
+        <table className="cde">
           <thead>
-            <tr className="text-left text-slate-500 border-b">
-              <th className="py-2">Run</th><th>Status</th><th>Records</th><th>Started</th>
-            </tr>
+            <tr><th>Run</th><th>Status</th><th>Records</th><th>Started</th></tr>
           </thead>
           <tbody>
+            {runs.length === 0 && (
+              <tr><td colSpan={4} className="mini" style={{ padding: "14px 10px" }}>No runs yet.</td></tr>
+            )}
             {runs.map((r) => (
-              <tr key={r.run_id} className="border-b last:border-0">
-                <td className="py-2">#{r.run_id} {r.run_name}</td>
-                <td><span className={`px-2 py-0.5 rounded text-xs ${statusColor(r.status)}`}>{r.status}</span></td>
-                <td>{r.records_scanned}</td>
-                <td>{new Date(r.started_at).toLocaleString()}</td>
+              <tr key={r.run_id}>
+                <td style={{ fontWeight: 600 }}>#{r.run_id} {r.run_name}</td>
+                <td><span className={`badge ${statusBadge(r.status)}`}>{r.status}</span></td>
+                <td className="tnum">{r.records_scanned?.toLocaleString?.() ?? r.records_scanned}</td>
+                <td className="mini">{new Date(r.started_at).toLocaleString()}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </section>
-    </main>
+      </div>
+    </>
   );
 }
 
-function statusColor(status: string) {
-  return {
-    running: "bg-blue-100 text-blue-700",
-    completed: "bg-green-100 text-green-700",
-    failed: "bg-red-100 text-red-700",
-  }[status] || "bg-slate-100";
+function statusBadge(status: string) {
+  return { running: "b-sub", completed: "b-appr", failed: "b-rej" }[status] || "b-draft";
 }

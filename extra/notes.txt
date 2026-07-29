@@ -1,0 +1,452 @@
+================================================================================
+SMTC DATA VALIDATION FRAMEWORK — REFERENCE NOTES
+Part 1: Every rule type, with examples
+Part 2: Every table and column, and why it exists
+================================================================================
+
+
+################################################################################
+PART 1 — RULE TYPES
+################################################################################
+
+There are 8 rule types. A rule is never code — it is a ROW in the DQ_RULE
+table. The engine reads that row and compiles it into SQL at run time. That is
+why a business user can add a rule through the web UI with no developer and no
+deployment.
+
+Two things the user picks are turned into everything else by the backend:
+  - rule_type        -> decides the dimension, and which SQL template is used
+  - rule_config_json -> the values the user typed (allowed list, regex, etc.)
+Everything else (condition_expr, dimension, rule_name) is GENERATED.
+
+--------------------------------------------------------------------------------
+HOW RULES EXECUTE — "query-centric" vs "record-centric"
+--------------------------------------------------------------------------------
+
+7 of the 8 types are QUERY-CENTRIC (single-row): to judge one record you only
+need that record. They compile to one SELECT ... WHERE <failing condition>.
+
+1 of the 8 is RECORD-CENTRIC (whole-set): Unique. You cannot tell whether a
+value is duplicated by looking at one row — you must compare across all rows.
+Per the agreed direction, it is STILL just plain SQL (GROUP BY / HAVING), run
+through the same execution path. There is no separate rules-engine.
+
+IMPORTANT: this classification is NOT stored in a column. It is derived from
+rule_type every time in rule_compiler.py. 5 predicate compilers, 1 duplicate
+compiler, plus the 2 newer ones below.
+
+--------------------------------------------------------------------------------
+1. REQUIRED                                   (dimension: Completeness)
+--------------------------------------------------------------------------------
+What it does : The field must not be empty. Blank or NULL = violation.
+Example      : Every Account must have a Name.
+User fills   : Object=Account, Field=Name, Rule Type=Required, Severity=Critical
+               (no config box — nothing to configure)
+Compiles to  : WHERE Name IS NULL OR TRIM(Name) = ''
+Execution    : Query-centric (single row)
+
+--------------------------------------------------------------------------------
+2. ALLOWED VALUES                             (dimension: Validity)
+--------------------------------------------------------------------------------
+What it does : Value must be one of a fixed list. Anything else = violation.
+Example      : BillingCountry may only be US, IN or GB.
+User fills   : Field=BillingCountry, Rule Type=Allowed Values,
+               Allowed Values = "US, IN, GB", Severity=Warning
+Config JSON  : {"values": ["US","IN","GB"]}
+Compiles to  : WHERE BillingCountry IS NOT NULL AND TRIM(BillingCountry) <> ''
+                 AND BillingCountry NOT IN ('US','IN','GB')
+Execution    : Query-centric (single row)
+NOTE         : Blank values are ignored here on purpose — that is the job of a
+               separate Required rule. One rule, one responsibility.
+WATCH OUT    : the list must match the data EXACTLY. Real Account data holds
+               "USA" and "Italy" (full names), not ISO codes — configuring
+               "US, IN, GB" against it failed 100% of rows in testing.
+
+--------------------------------------------------------------------------------
+3. FORMAT PATTERN                             (dimension: Format)
+--------------------------------------------------------------------------------
+What it does : Value must match a regular expression.
+Example      : Website must start with http:// or https://
+User fills   : Field=Website, Rule Type=Format Pattern,
+               Pattern = "^https?://", Severity=Warning
+Config JSON  : {"pattern": "^https?://"}
+Compiles to  : WHERE Website IS NOT NULL AND TRIM(Website) <> ''
+                 AND NOT REGEXP('^https?://', Website)
+Execution    : Query-centric (single row)
+NOTE         : REGEXP is registered as a custom function for SQLite. On Oracle
+               or Postgres this becomes REGEXP_LIKE / the ~ operator — the one
+               genuinely database-specific piece in the engine.
+
+--------------------------------------------------------------------------------
+4. MAX LENGTH                                 (dimension: Format)
+--------------------------------------------------------------------------------
+What it does : Value must not exceed a character limit.
+Example      : BillingPostalCode must be 20 characters or fewer.
+User fills   : Field=BillingPostalCode, Rule Type=Max Length,
+               Max Length = 20, Severity=Warning
+Config JSON  : {"max_length": 20}
+Compiles to  : WHERE LENGTH(BillingPostalCode) > 20
+Execution    : Query-centric (single row)
+
+--------------------------------------------------------------------------------
+5. UNIQUE                                     (dimension: Uniqueness)
+--------------------------------------------------------------------------------
+What it does : No two records may share the same value.
+Example      : Two Accounts must not have the same Name.
+User fills   : Field=Name, Rule Type=Unique, Severity=Warning
+               (no config box)
+Compiles to  : SELECT Name FROM stg_source_record
+                 WHERE run_id = ? AND Name IS NOT NULL AND TRIM(Name) <> ''
+                 GROUP BY Name HAVING COUNT(*) > 1
+               ...then a second pass pulls every record_key sharing those values,
+               so BOTH sides of a duplicate pair are reported.
+Execution    : RECORD-CENTRIC (whole set) — the only one. Still plain SQL.
+
+--------------------------------------------------------------------------------
+6. CONDITIONAL REQUIRED                       (dimension: Consistency)
+--------------------------------------------------------------------------------
+What it does : A field is mandatory ONLY when another field has a given value.
+Example      : If Type = 'Owner/Operator', then Phone must be filled in.
+User fills   : Field=Phone (the field being required),
+               Rule Type=Conditional Required,
+               "If Field: If Value" = "Type:Owner/Operator"
+Config JSON  : {"if_field": "Type", "if_value": "Owner/Operator"}
+Compiles to  : WHERE Type = 'Owner/Operator'
+                 AND (Phone IS NULL OR TRIM(Phone) = '')
+Execution    : Query-centric — both fields are on the SAME row.
+NOTE         : This handles ONE condition. For several chained conditions use
+               Multi-Condition (#8).
+
+--------------------------------------------------------------------------------
+7. REFERENTIAL INTEGRITY                      (dimension: Ref Integrity)
+--------------------------------------------------------------------------------
+What it does : The value must already exist in ANOTHER object's field.
+               The classic foreign-key check.
+Example      : Every Account.BillingCountry must be a country that already
+               appears in Contact.BillingCountry.
+User fills   : Field=BillingCountry (the column on THIS object),
+               Rule Type=Referential Integrity,
+               Reference Object=Contact, Reference Field=BillingCountry
+Config JSON  : {"ref_object_id": 5, "ref_element_id": 41}
+Compiles to  : WHERE BillingCountry IS NOT NULL AND TRIM(BillingCountry) <> ''
+                 AND BillingCountry NOT IN (
+                       SELECT value FROM dq_reference_value
+                       WHERE object_id = ? AND element_id = ?)
+Execution    : Query-centric (LEFT JOIN / NOT IN pattern) — one SQL query.
+
+  ** WHY A SEPARATE dq_reference_value TABLE? **
+  STG_SOURCE_RECORD is wiped after every run (it is runtime-only, by design).
+  So when Account validates, Contact's staged rows may already be gone — a
+  direct cross-object JOIN is impossible. Instead, at the end of each run the
+  engine captures the DISTINCT values of any element that some approved
+  ref_integrity rule points at, into dq_reference_value. Small, bounded,
+  indexed — not a copy of the source data.
+
+  ** BOOTSTRAPPING BEHAVIOUR (important, not a bug) **
+  A ref_integrity rule can only see values captured by the REFERENCED object's
+  most recent completed run. If that object has never been validated, the
+  reference set is empty and the rule fails every row.
+  Verified in testing:
+      Run 1 -> 101 of 101 failed  (reference set empty)
+      Run 2 -> 0 of 101 failed    (reference set now populated by Run 1)
+  So: always run the referenced object at least once first.
+
+--------------------------------------------------------------------------------
+8. MULTI-CONDITION (ADVANCED)                 (dimension: Consistency)
+--------------------------------------------------------------------------------
+What it does : Chain SEVERAL conditions on the same record with AND/OR, then
+               either require a field or simply flag the record.
+Example      : If Type = 'Owner/Operator' AND BillingCountry = 'USA',
+               then BillingCity must be filled in.
+User fills   : Rule Type=Multi-Condition. The single "Field" dropdown is
+               REPLACED by a condition builder:
+                   Condition rows : [Field] [Operator] [Value]   (+ Add)
+                   Match          : ALL (AND) / ANY (OR)
+                   Then           : Require a field  ->  pick the field
+                                    OR  Just flag the record
+Operators    : equals, not equals, is one of (comma list), is empty, is not empty
+Config JSON  : {"conditions":[{"field":"Type","operator":"=","value":"Owner/Operator"},
+                              {"field":"BillingCountry","operator":"=","value":"USA"}],
+                "logic":"AND",
+                "then":{"type":"require","field":"BillingCity"}}
+Compiles to  : WHERE (Type = 'Owner/Operator' AND BillingCountry = 'USA')
+                 AND (BillingCity IS NULL OR TRIM(BillingCity) = '')
+Execution    : Query-centric — every field referenced is on the SAME row, so it
+               is one multi-clause WHERE.
+
+  ** HONEST LIMITATION **
+  This is NOT a Drools / SAP BRF+ style rules engine. It does not load the
+  record into memory as a "fact", and one rule cannot depend on another rule's
+  outcome. If that is ever needed it is a separate, heavier piece of work.
+
+  ** "then: flag" vs "then: require" **
+  require -> violation when the conditions match AND the target field is empty
+  flag    -> violation whenever the conditions match, full stop
+             (use it to report on a segment, e.g. "list every Temporary account
+             in the USA")
+
+  ** WHICH element_id gets stored? **
+  DQ_RULE.element_id is NOT NULL, but a multi-condition rule has no single
+  field. The UI stores the field the rule is most "about": the require-target,
+  or the first condition's field for a flag-only rule.
+
+  ** VERIFIED CORRECT **
+  Tested on the real 101-row sample:
+    rule  : IF Type='Owner/Operator' THEN require BillingCity
+    manual count of matching rows in the CSV : 37
+    engine result                            : 37 failed, score 63.37%
+    -> exact match.
+
+
+################################################################################
+PART 2 — DATABASE SCHEMA: EVERY TABLE, EVERY COLUMN, AND WHY
+################################################################################
+
+9 tables. Grouped as: CATALOG (what we validate), RULES (how), EXECUTION
+(what happened), RUNTIME (temporary).
+
+Development runs on SQLite (zero setup, one file: backend/smtc_dq.db).
+Everything uses SQLAlchemy with portable types only, so moving to Oracle /
+PostgreSQL / MySQL is a connection-string change, not a rewrite.
+
+================================================================================
+CATALOG
+================================================================================
+
+--------------------------------------------------------------------------------
+DQ_OBJECT — one row per table/object we validate
+--------------------------------------------------------------------------------
+object_id           PK. Everything else hangs off this.
+object_name         Display name shown in the UI, e.g. "Account".
+source_system       e.g. "SFDC". Shown on the dashboard; lets a second source
+                    be added later without a schema change.
+source_object_name  The real object name at source (may differ from the label).
+record_key_column   WHICH source column is the unique identifier — "Id" for
+                    Salesforce. The engine needs this to know what to write
+                    into DQ_VIOLATION.record_key so a violation is actionable.
+active_flag         Retire an object from validation without deleting history.
+created_at          Audit.
+
+--------------------------------------------------------------------------------
+DQ_ELEMENT — the CDEs (critical data elements) per object
+--------------------------------------------------------------------------------
+element_id          PK. Referenced by rules, violations, metrics.
+object_id           FK -> which object this field belongs to.
+element_name        Display name in the rule form and dashboard.
+source_column_name  The real column name at source. Kept separate from
+                    element_name in case of renames/aliases.
+data_type           Lets the UI offer only sensible rule types per field
+                    (e.g. no Max Length on a date).
+active_flag         Deactivate a CDE without losing its rule/violation history.
+created_at          Audit.
+
+For Account this is seeded with the 16 confirmed CDEs:
+  BillingCity, BillingCountry, BillingPostalCode, BillingState, BillingStreet,
+  Industry, Name, Phone, ShippingCity, ShippingCountry, ShippingPostalCode,
+  ShippingState, ShippingStreet, Type, Website, Region__c
+
+================================================================================
+RULES
+================================================================================
+
+--------------------------------------------------------------------------------
+DQ_RULE — the validation logic, stored as DATA not code
+--------------------------------------------------------------------------------
+rule_id             PK.
+object_id           FK -> which object.
+element_id          FK -> which field. (For multi-condition, see the note in
+                    Part 1 #8.)
+rule_name           Human label, auto-generated e.g. "BillingCountry — Allowed
+                    Values". Editable.
+rule_type           One of the 8. This is what the UI form and the compiler
+                    both key off.
+dimension           Completeness / Validity / Format / Uniqueness /
+                    Consistency / Ref Integrity. DERIVED from rule_type — the
+                    user never sets it. Drives the heatmap columns.
+severity            Critical or Warning. Almost the only judgement call the
+                    business user actually makes; drives dashboard weighting.
+rule_config_json    ** SOURCE OF TRUTH ** — exactly what the user typed in the
+                    form, e.g. {"values":["US","IN","GB"]}. Never hand-edited.
+condition_expr      ** GENERATED ARTIFACT ** — the compiled SQL predicate.
+                    Regenerated from rule_config_json on every save, so it can
+                    never silently drift out of sync with the config.
+status              draft / submitted / approved / rejected.
+                    THE APPROVAL GATE: the engine only ever loads
+                    status='approved'. A draft rule exists in the table but is
+                    completely inert.
+created_by          Who authored it.
+created_at          When.
+updated_at          Distinguishes a freshly edited draft from a stale one.
+approved_by         WHO approved it — approval needs its own audit trail,
+approved_at         separate from creation, or "approved" means nothing.
+
+================================================================================
+EXECUTION
+================================================================================
+
+--------------------------------------------------------------------------------
+DQ_RUN — one row per validation execution
+--------------------------------------------------------------------------------
+run_id              PK. Ties a whole execution together.
+object_id           FK -> which object was validated.
+run_name            Human label for the run history list.
+run_type            file_upload | db_fetch — which ingestion path was used.
+status              running / completed / failed.
+                    The dashboard reads ONLY 'completed' runs, so a partial or
+                    broken run is invisible rather than misleading.
+started_at          Run auditing + duration; also orders the trend chart.
+finished_at         "
+records_scanned     Feeds the "Records Scanned" KPI directly, and is the
+                    denominator for every score in the run.
+source_file_name    Traceability — which upload produced this run.
+error_message       If status='failed', what actually went wrong. Without this
+                    a failed run is a silent gap.
+
+--------------------------------------------------------------------------------
+DQ_VIOLATION — the failed records (the fix team's worklist)
+--------------------------------------------------------------------------------
+One row per: failing record x rule x run.
+Expect roughly 30-40% of rows to fail something on a real run, so this is the
+big table — indexed accordingly.
+
+violation_id        PK.
+run_id              FK -> which run.
+object_id           FK -> which object.
+element_id          FK -> which field.
+rule_id             FK -> which rule flagged it.
+record_key          THE SOURCE Id. This is what makes a violation actionable —
+                    someone can go find that exact record and fix it.
+current_value       The actual bad value, so the drilldown shows what is wrong
+                    without going back to the source system.
+violation_reason    Human-readable message, e.g. "BillingCountry value is not
+                    in the allowed list".
+severity            Denormalized from the rule AT WRITE TIME —
+dimension           so the dashboard can aggregate without a join, AND so
+                    history stays correct even if the rule's severity is later
+                    edited.
+INDEXES             (run_id, object_id), (run_id, rule_id), (run_id, severity)
+                    — at ~2M rows per run the UI would crawl without them.
+
+Deliberately NOT here in V1: fix_status, assigned_to, times_seen, open/closed.
+That is the remediation lifecycle, postponed by decision.
+
+--------------------------------------------------------------------------------
+DQ_METRIC — the dashboard's fact table
+--------------------------------------------------------------------------------
+One row per: rule x run. Only a few hundred rows per run.
+This is the whole reason the dashboard is fast: it NEVER aggregates millions of
+violations live, it reads pre-computed counters.
+
+metric_id           PK.
+run_id              FK.
+object_id           FK.
+element_id          FK.
+rule_id             FK.
+dimension           Denormalized, same reasoning as DQ_VIOLATION.
+severity            "
+records_checked     Denominator. Also feeds "Records Scanned".
+records_failed      Feeds every "Critical Failed Checks" style KPI.
+score_pct           (checked - failed) / checked, computed ONCE at run close.
+                    This is what makes the KPI cards and heatmap instant.
+
+--------------------------------------------------------------------------------
+DQ_REFERENCE_VALUE — supports Referential Integrity
+--------------------------------------------------------------------------------
+id                  PK.
+object_id           FK -> the object these values came from.
+element_id          FK -> the field these values came from.
+value               One DISTINCT value.
+INDEX               (object_id, element_id, value) — this table is hit by a
+                    NOT IN subquery on every ref_integrity check.
+
+Refreshed at the end of a run, but ONLY for elements that some approved
+ref_integrity rule actually points at — bounded work, not "capture all 16 CDEs
+every run just in case". See Part 1 #7 for the full reasoning.
+
+================================================================================
+RUNTIME / TRANSIENT
+================================================================================
+
+--------------------------------------------------------------------------------
+STG_SOURCE_RECORD — temporary staging, cleared after every run
+--------------------------------------------------------------------------------
+id                  Internal surrogate key (NOT the source Id).
+run_id              Scopes this batch to one run; makes cleanup a one-liner.
+record_key          The source Id, carried through so violations can point back.
+<16 CDE columns>    ONLY the fields we actually validate. This is the column
+                    pruning decision: never pull 443 columns when 17 are needed.
+                    Measured impact: the full 443-column Account export costs
+                    ~13 KB/row in pandas — about 63 GB at 5M rows. Pruning to
+                    the CDE columns cuts that by ~90%.
+loaded_at           Shows how stale a stuck run's staging data is.
+
+NEVER a permanent store. Its entire job is to exist for the duration of one
+validation pass, then be deleted.
+
+
+################################################################################
+HOW A RUN ACTUALLY EXECUTES (and why it scales)
+################################################################################
+
+  1. Create DQ_RUN (status='running')
+  2. Stage the source into STG_SOURCE_RECORD in 5,000-row batches
+     (never loads the whole file into memory)
+  3. Load rules:  SELECT * FROM DQ_RULE
+                  WHERE object_id = ? AND status = 'approved'
+  4. For EACH rule:
+       - compile rule_config_json -> SQL
+       - run ONE query; the DATABASE does the work as a set operation.
+         Python never loops over data rows — only over rules (dozens).
+       - write violations with bulk inserts in 5,000-row chunks
+       - write one DQ_METRIC row
+       - COMMIT  (one transaction per rule)
+  5. Refresh DQ_REFERENCE_VALUE for any element other objects depend on
+     (must happen BEFORE staging is cleared)
+  6. Clear STG_SOURCE_RECORD
+  7. Mark run 'completed'
+
+WHY IT DOESN'T BREAK AT MILLIONS OF ROWS
+  - SQL pushdown: rules are set operations run by the database, not Python
+    loops. A WHERE scan or GROUP BY over 5-10M indexed rows is seconds.
+  - Batched writes: the real bottleneck is writing violations back. One-row-at-
+    a-time inserts would take 10-20+ minutes; 5,000-row bulk chunks do not.
+  - One commit per rule: if the process dies on rule 40 of 60, rules 1-39 are
+    already durably committed. Partial progress survives a crash.
+  - Runs execute as a BACKGROUND TASK, never inline in an HTTP request — a
+    multi-minute job would otherwise blow the request timeout. The API returns
+    a run_id immediately and the UI polls DQ_RUN.status.
+  - Any exception marks the run 'failed' with error_message set, so a broken
+    run is visible rather than silently half-done.
+
+
+################################################################################
+CURRENT STATE / WHAT IS NOT BUILT YET
+################################################################################
+
+BUILT AND VERIFIED
+  - All 8 rule types, compiled from metadata, no code per rule
+  - Draft -> submit -> approve -> reject workflow (approval gates execution)
+  - Chunked ingestion (CSV upload + direct DB fetch)
+  - Background run execution with status polling
+  - Violations captured with source Id, paginated API + streamed CSV export
+  - Dashboard: overview + object drilldown, reading DQ_METRIC only
+  - Light / dark theme
+
+NOT BUILT (deliberately, or not yet)
+  - Automatic rule SUGGESTION (profiling a new column and proposing a rule).
+    The no-code mechanism is done; the automation is not started.
+  - Real AI integration. The "Generate with AI" button only builds a prompt to
+    paste into Claude/ChatGPT/Copilot by hand — no LLM is called, because LLM
+    data usage is not approved for this project.
+  - Rule EDITING (rules can be created and status-changed, not edited).
+  - Violations browser page (the API exists; there is no UI for it yet).
+  - Rule preview/dry-run wired into the UI (the endpoint exists).
+  - DB-fetch form in the UI (the endpoint exists; upload-only in the UI).
+  - Auth / users / roles — deferred by decision.
+  - Remediation lifecycle on violations — deferred by decision (V1 is
+    validation + violation reporting only).
+  - Testing at true 5-10M scale — pending a run against the real accounts.csv.
+
+================================================================================
+END
+================================================================================

@@ -33,5 +33,12 @@ export default function Heatmap({ rows, onSelect }: { rows: HeatmapRow[]; onSele
 }
 
 function shortLabel(d: string) {
-  return { Completeness: "Complete", "Ref Integrity": "Ref Int.", Relationship: "Rel'ship" }[d] || d;
+  return ({
+    Completeness: "Complete",
+    Validity: "Valid",
+    Format: "Format",
+    Uniqueness: "Unique",
+    "Ref Integrity": "Ref Int",
+    Relationship: "Relation",
+  } as Record<string, string>)[d] || d;
 }

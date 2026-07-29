@@ -28,8 +28,13 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
   }, [data, box]);
 
   return (
-    <div ref={wrapRef} style={{ flex: 1, minHeight: 150, display: "flex" }}>
-      <svg width={box.w} height={box.h} viewBox={`0 0 ${box.w} ${box.h}`}
+    <div ref={wrapRef} style={{ flex: 1, minHeight: 150, minWidth: 0, display: "flex" }}>
+      {/* width:100% (not a fixed px width) so the SVG can shrink with its
+          grid column -- a hard width here made the panel un-shrinkable and
+          pushed the neighbouring panel off-screen. viewBox keeps the
+          internal geometry correct at any rendered size. */}
+      <svg width="100%" height={box.h} viewBox={`0 0 ${box.w} ${box.h}`}
+           preserveAspectRatio="xMidYMid meet"
            dangerouslySetInnerHTML={{ __html: svg }} />
     </div>
   );

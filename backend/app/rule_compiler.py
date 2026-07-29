@@ -130,6 +130,92 @@ def _compile_conditional_required(element: str, config: dict) -> CompiledRule:
     )
 
 
+def _compile_ref_integrity(element: str, config: dict) -> CompiledRule:
+    """
+    Query-centric per the classification you shared (LEFT JOIN / NOT IN
+    pattern) -- one SQL query, no special execution path. It checks this
+    row's FK column against dq_reference_value, NOT against the referenced
+    object's live staging (which may already be cleared -- see models.py).
+    """
+    col = assert_safe_identifier(element)
+    ref_object_id = config.get("ref_object_id")
+    ref_element_id = config.get("ref_element_id")
+    if not ref_object_id or not ref_element_id:
+        raise RuleCompileError("ref_integrity requires 'ref_object_id' and 'ref_element_id'")
+    return CompiledRule(
+        mode="predicate",
+        condition_sql=(
+            f"({col} IS NOT NULL AND TRIM({col}) <> '' AND {col} NOT IN ("
+            f"SELECT value FROM dq_reference_value "
+            f"WHERE object_id = :ref_object_id AND element_id = :ref_element_id"
+            f"))"
+        ),
+        params={"ref_object_id": ref_object_id, "ref_element_id": ref_element_id},
+    )
+
+
+_CONDITION_OPS = {"=", "!=", "in", "is_null", "is_not_null"}
+
+
+def _compile_one_condition(cond: dict, idx: int) -> tuple[str, dict]:
+    col = assert_safe_identifier(cond.get("field", ""))
+    op = cond.get("operator")
+    val = cond.get("value")
+    if op not in _CONDITION_OPS:
+        raise RuleCompileError(f"unsupported operator {op!r}; use one of {sorted(_CONDITION_OPS)}")
+    if op == "=":
+        return f"{col} = :cv_{idx}", {f"cv_{idx}": val}
+    if op == "!=":
+        return f"{col} <> :cv_{idx}", {f"cv_{idx}": val}
+    if op == "is_null":
+        return f"({col} IS NULL OR TRIM({col}) = '')", {}
+    if op == "is_not_null":
+        return f"({col} IS NOT NULL AND TRIM({col}) <> '')", {}
+    # op == "in"
+    values = val if isinstance(val, list) else [v.strip() for v in str(val).split(",") if v.strip()]
+    if not values:
+        raise RuleCompileError(f"'in' operator on {col} requires at least one value")
+    placeholders = ", ".join(f":cv_{idx}_{j}" for j in range(len(values)))
+    params = {f"cv_{idx}_{j}": v for j, v in enumerate(values)}
+    return f"{col} IN ({placeholders})", params
+
+
+def _compile_multi_condition(element: str, config: dict) -> CompiledRule:
+    """
+    Chained, multi-field business rules (e.g. "if Type=Hotel AND Brand=X
+    AND Country IN [...] then require export_license"). Still query-centric
+    under the hood -- every field referenced belongs to the SAME row, so it
+    compiles to one multi-clause SQL WHERE, same execution path as every
+    other predicate rule. NOT a record-loaded rules-engine (Drools/BRF+
+    style) -- that's a different, heavier thing, not what this builds.
+    """
+    conditions = config.get("conditions") or []
+    logic = (config.get("logic") or "AND").upper()
+    then = config.get("then") or {}
+    if not conditions:
+        raise RuleCompileError("multi_condition requires at least one condition")
+    if logic not in ("AND", "OR"):
+        raise RuleCompileError("logic must be 'AND' or 'OR'")
+
+    clauses, params = [], {}
+    for i, cond in enumerate(conditions):
+        clause, p = _compile_one_condition(cond, i)
+        clauses.append(clause)
+        params.update(p)
+    if_expr = f" {logic} ".join(clauses)
+
+    then_type = then.get("type")
+    if then_type == "require":
+        then_col = assert_safe_identifier(then.get("field", ""))
+        condition_sql = f"(({if_expr}) AND ({then_col} IS NULL OR TRIM({then_col}) = ''))"
+    elif then_type == "flag":
+        condition_sql = f"({if_expr})"
+    else:
+        raise RuleCompileError("then.type must be 'require' or 'flag'")
+
+    return CompiledRule(mode="predicate", condition_sql=condition_sql, params=params)
+
+
 _COMPILERS = {
     "required": _compile_required,
     "allowed_values": _compile_allowed_values,
@@ -137,6 +223,8 @@ _COMPILERS = {
     "max_length": _compile_max_length,
     "unique": _compile_unique,
     "conditional_required": _compile_conditional_required,
+    "ref_integrity": _compile_ref_integrity,
+    "multi_condition": _compile_multi_condition,
 }
 
 RULE_TYPES = list(_COMPILERS.keys())
