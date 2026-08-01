@@ -1,13 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, Kpis, HeatmapRow, TopFailingItem, TrendPoint, FixProfile, CriticalByDimension, Drilldown } from "@/lib/api";
+import { api, BatchOption, Kpis, HeatmapRow, TopFailingItem, TrendPoint, FixProfile, CriticalByDimension, Drilldown } from "@/lib/api";
 import Heatmap from "./Heatmap";
 import DonutChart from "./DonutChart";
 import TrendChart from "./TrendChart";
+import ScoreGauge from "./ScoreGauge";
 
 export default function DashboardPage() {
-  const [selectedObjectId, setSelectedObjectId] = useState<number | null>(null);
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [source, setSource] = useState("");
+  const [batchId, setBatchId] = useState<number | null>(null);
+  const [batchOpts, setBatchOpts] = useState<BatchOption[]>([]);
+
+  // Run ID is meaningless without a source, so it stays disabled until one is
+  // picked and then only offers batches from that source.
+  useEffect(() => {
+    if (!source) { setBatchOpts([]); return; }
+    api.batchOptions(source).then(setBatchOpts).catch(() => setBatchOpts([]));
+  }, [source]);
 
   return (
     <>
@@ -20,12 +31,24 @@ export default function DashboardPage() {
         </div>
         <div className="spacer" />
         <div className="flt">
-          <span className="fl">run_id</span>
-          <select defaultValue="latest"><option value="latest">latest</option></select>
+          <span className="fl">Data Source</span>
+          <select value={source} onChange={(e) => { setSource(e.target.value); setBatchId(null); }}>
+            <option value="">All sources</option>
+            <option value="db_fetch">Database</option>
+            <option value="file_upload">File upload</option>
+          </select>
         </div>
         <div className="flt">
-          <span className="fl">Data Source</span>
-          <select defaultValue="SFDC"><option>SFDC</option></select>
+          <span className="fl">Run ID</span>
+          <select value={batchId ?? ""} disabled={!source}
+                  onChange={(e) => setBatchId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">{source ? "Latest per object" : "Pick a source first"}</option>
+            {batchOpts.map((b) => (
+              <option key={b.batch_id} value={b.batch_id}>
+                #{b.batch_id} · {b.entity_count} obj
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flt">
           <span className="fl">Run Date</span>
@@ -37,7 +60,7 @@ export default function DashboardPage() {
 
       <div className="content">
         {selectedObjectId == null ? (
-          <Overview onSelectObject={setSelectedObjectId} />
+          <Overview onSelectObject={setSelectedObjectId} batchId={batchId} />
         ) : (
           <ObjectDrilldown objectId={selectedObjectId} onBack={() => setSelectedObjectId(null)} />
         )}
@@ -46,7 +69,7 @@ export default function DashboardPage() {
   );
 }
 
-function Overview({ onSelectObject }: { onSelectObject: (id: number) => void }) {
+function Overview({ onSelectObject, batchId }: { onSelectObject: (id: string) => void; batchId: number | null }) {
   const [kpis, setKpis] = useState<Kpis | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapRow[]>([]);
   const [topFailing, setTopFailing] = useState<TopFailingItem[]>([]);
@@ -57,13 +80,14 @@ function Overview({ onSelectObject }: { onSelectObject: (id: number) => void }) 
 
   useEffect(() => {
     // single request instead of six -- see /api/dashboard/summary
-    api.summary()
+    setKpis(null);
+    api.summary(batchId)
       .then((d) => {
         setKpis(d.kpis); setHeatmap(d.heatmap); setTopFailing(d.top_failing);
         setTrend(d.trend); setFixProfile(d.fix_profile); setCritByDim(d.critical_by_dimension);
       })
       .catch((e) => setError(String(e.message || e)));
-  }, []);
+  }, [batchId]);
 
   if (error) {
     return (
@@ -117,26 +141,18 @@ function Overview({ onSelectObject }: { onSelectObject: (id: number) => void }) 
           </div>
         </div>
         <div className="panel">
-          <h4>DQ Score <span style={{ color: "var(--accent)" }}>▲</span> vs Critical Failed <span style={{ color: "var(--good)" }}>■</span></h4>
+          <h4>Quality Trend <span className="hint">all runs · not filtered</span></h4>
           <TrendChart data={trend} />
         </div>
         <div className="panel">
-          <h4>Severity Split <span className="hint">{fixProfile ? `of ${fmt(fixProfile.critical_count + fixProfile.warning_count)}` : ""}</span></h4>
+          <h4>Severity Split <span className="hint">of {fixProfile ? fmt(fixProfile.critical_count + fixProfile.warning_count) : "0"} failed checks</span></h4>
           {fixProfile && (
-            <div className="fixsplit">
-              <div className="fixnums">
-                <div className="fn"><div className="v tone-crit">{fixProfile.critical_pct}%</div><div className="l">Critical</div></div>
-                <div className="fn right"><div className="v tone-warn">{fixProfile.warning_pct}%</div><div className="l">Warning</div></div>
-              </div>
-              <div className="fixbar">
-                <span className="seg" style={{ width: `${fixProfile.critical_pct}%`, background: "var(--crit)" }} />
-                <span className="seg" style={{ width: `${fixProfile.warning_pct}%`, background: "var(--warn)" }} />
-              </div>
-              <p className="fixcounts">
-                {fmt(fixProfile.critical_count)} critical · {fmt(fixProfile.warning_count)} warning
-                <br />V1 has no auto-fix concept yet — showing severity split.
-              </p>
-            </div>
+            <ScoreGauge
+              criticalPct={fixProfile.critical_pct}
+              warningPct={fixProfile.warning_pct}
+              criticalCount={fixProfile.critical_count}
+              warningCount={fixProfile.warning_count}
+            />
           )}
         </div>
       </div>
@@ -144,7 +160,7 @@ function Overview({ onSelectObject }: { onSelectObject: (id: number) => void }) 
   );
 }
 
-function ObjectDrilldown({ objectId, onBack }: { objectId: number; onBack: () => void }) {
+function ObjectDrilldown({ objectId, onBack }: { objectId: string; onBack: () => void }) {
   const [data, setData] = useState<Drilldown | null>(null);
   const [error, setError] = useState<string | null>(null);
 

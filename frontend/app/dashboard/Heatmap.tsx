@@ -2,7 +2,7 @@
 
 import { HeatmapRow, DIMENSION_ORDER, ragClass } from "@/lib/api";
 
-export default function Heatmap({ rows, onSelect }: { rows: HeatmapRow[]; onSelect: (objectId: number) => void }) {
+export default function Heatmap({ rows, onSelect }: { rows: HeatmapRow[]; onSelect: (objectId: string) => void }) {
   return (
     <table className="heat">
       <thead>

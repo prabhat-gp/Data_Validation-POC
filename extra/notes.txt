@@ -1,7 +1,8 @@
 ================================================================================
 SMTC DATA VALIDATION FRAMEWORK — REFERENCE NOTES
 Part 1: Every rule type, with examples
-Part 2: Every table and column, and why it exists
+Part 2: Every table and column, and why it exists  [UPDATED: val_* schema]
+Part 3: Inspecting the database on Windows + macOS
 ================================================================================
 
 
@@ -9,15 +10,29 @@ Part 2: Every table and column, and why it exists
 PART 1 — RULE TYPES
 ################################################################################
 
-There are 8 rule types. A rule is never code — it is a ROW in the DQ_RULE
+There are 8 rule types. A rule is never code — it is a ROW in the val_rules
 table. The engine reads that row and compiles it into SQL at run time. That is
 why a business user can add a rule through the web UI with no developer and no
 deployment.
 
 Two things the user picks are turned into everything else by the backend:
   - rule_type        -> decides the dimension, and which SQL template is used
-  - rule_config_json -> the values the user typed (allowed list, regex, etc.)
-Everything else (condition_expr, dimension, rule_name) is GENERATED.
+  - rule_definition  -> the values the user typed (allowed list, regex, etc.)
+Everything else (dimension, execution_type, rule_name, rule_id, source_system,
+primary_key_field) is GENERATED server-side.
+
+OPTIONAL SCOPE FILTER (all 8 types, including Required and Unique):
+  Any rule may carry a "filter" that limits WHICH RECORDS it checks:
+      {"filter": {"conditions": [{"field":"Type","operator":"=",
+                                  "value":"Owner/Operator"}], "logic":"AND"}}
+  Required + filter  -> WHERE (Type='Owner/Operator')
+                          AND (BillingCity IS NULL OR TRIM(BillingCity)='')
+  Unique   + filter  -> the filter is applied to BOTH passes. Applying it only
+                        to pass 1 would find duplicates inside the filtered
+                        subset, then report every row sharing that value --
+                        including rows outside the filter. Silent false
+                        positives.
+  Empty/absent filter == check the whole table (previous behaviour).
 
 --------------------------------------------------------------------------------
 HOW RULES EXECUTE — "query-centric" vs "record-centric"
@@ -31,17 +46,18 @@ value is duplicated by looking at one row — you must compare across all rows.
 Per the agreed direction, it is STILL just plain SQL (GROUP BY / HAVING), run
 through the same execution path. There is no separate rules-engine.
 
-IMPORTANT: this classification is NOT stored in a column. It is derived from
-rule_type every time in rule_compiler.py. 5 predicate compilers, 1 duplicate
-compiler, plus the 2 newer ones below.
+IMPORTANT: this classification is DERIVED from rule_type (see RULE_TYPE_META
+in rule_compiler.py) and stored on val_rules.execution_type for reporting.
+It is never accepted from the client -- otherwise a 'required' rule could be
+marked RECORD and sent down the wrong engine path.
 
 --------------------------------------------------------------------------------
 1. REQUIRED                                   (dimension: Completeness)
 --------------------------------------------------------------------------------
 What it does : The field must not be empty. Blank or NULL = violation.
 Example      : Every Account must have a Name.
-User fills   : Object=Account, Field=Name, Rule Type=Required, Severity=Critical
-               (no config box — nothing to configure)
+User fills   : Entity=Account, Field=Name, Rule Type=Required, Severity=Critical
+               (optionally a scope filter -- see above)
 Compiles to  : WHERE Name IS NULL OR TRIM(Name) = ''
 Execution    : Query-centric (single row)
 
@@ -94,8 +110,8 @@ Execution    : Query-centric (single row)
 What it does : No two records may share the same value.
 Example      : Two Accounts must not have the same Name.
 User fills   : Field=Name, Rule Type=Unique, Severity=Warning
-               (no config box)
-Compiles to  : SELECT Name FROM stg_source_record
+               (optionally a scope filter -- see above)
+Compiles to  : SELECT Name FROM stg_account
                  WHERE run_id = ? AND Name IS NOT NULL AND TRIM(Name) <> ''
                  GROUP BY Name HAVING COUNT(*) > 1
                ...then a second pass pulls every record_key sharing those values,
@@ -127,19 +143,19 @@ Example      : Every Account.BillingCountry must be a country that already
 User fills   : Field=BillingCountry (the column on THIS object),
                Rule Type=Referential Integrity,
                Reference Object=Contact, Reference Field=BillingCountry
-Config JSON  : {"ref_object_id": 5, "ref_element_id": 41}
+Config JSON  : {"ref_entity_name": "Contact", "ref_field_name": "MailingCountry"}
 Compiles to  : WHERE BillingCountry IS NOT NULL AND TRIM(BillingCountry) <> ''
                  AND BillingCountry NOT IN (
-                       SELECT value FROM dq_reference_value
-                       WHERE object_id = ? AND element_id = ?)
+                       SELECT value FROM val_reference_values
+                       WHERE entity_name = ? AND field_name = ?)
 Execution    : Query-centric (LEFT JOIN / NOT IN pattern) — one SQL query.
 
-  ** WHY A SEPARATE dq_reference_value TABLE? **
-  STG_SOURCE_RECORD is wiped after every run (it is runtime-only, by design).
+  ** WHY A SEPARATE val_reference_values TABLE? **
+  Staging is wiped after every run (it is runtime-only, by design).
   So when Account validates, Contact's staged rows may already be gone — a
   direct cross-object JOIN is impossible. Instead, at the end of each run the
   engine captures the DISTINCT values of any element that some approved
-  ref_integrity rule points at, into dq_reference_value. Small, bounded,
+  ref_integrity rule points at, into val_reference_values. Small, bounded,
   indexed — not a copy of the source data.
 
   ** BOOTSTRAPPING BEHAVIOUR (important, not a bug) **
@@ -185,8 +201,8 @@ Execution    : Query-centric — every field referenced is on the SAME row, so i
              (use it to report on a segment, e.g. "list every Temporary account
              in the USA")
 
-  ** WHICH element_id gets stored? **
-  DQ_RULE.element_id is NOT NULL, but a multi-condition rule has no single
+  ** WHICH field_name gets stored? **
+  val_rules.field_name is NOT NULL, but a multi-condition rule has no single
   field. The UI stores the field the rule is most "about": the require-target,
   or the first condition's field for a flag-only rule.
 
@@ -199,211 +215,179 @@ Execution    : Query-centric — every field referenced is on the SAME row, so i
 
 
 ################################################################################
-PART 2 — DATABASE SCHEMA: EVERY TABLE, EVERY COLUMN, AND WHY
+PART 2 — DATABASE SCHEMA (val_* single-rules-table design)
 ################################################################################
 
-9 tables. Grouped as: CATALOG (what we validate), RULES (how), EXECUTION
-(what happened), RUNTIME (temporary).
+CONFIG is now a SINGLE table: val_rules. There is no separate object or
+element catalog -- a rule row carries entity_name / field_name /
+primary_key_field directly, so it is self-describing.
 
-Development runs on SQLite (zero setup, one file: backend/smtc_dq.db).
-Everything uses SQLAlchemy with portable types only, so moving to Oracle /
-PostgreSQL / MySQL is a connection-string change, not a rewrite.
-
-================================================================================
-CATALOG
-================================================================================
+The entity catalog lives in the ENTITIES constant in app/models.py (known up
+front, not discovered at upload time). That is what feeds the Rules page
+dropdowns -- you cannot derive a field list from rules that don't exist yet.
 
 --------------------------------------------------------------------------------
-DQ_OBJECT — one row per table/object we validate
+LOOKUP TABLES (tiny, constrain values + give the UI a description)
 --------------------------------------------------------------------------------
-object_id           PK. Everything else hangs off this.
-object_name         Display name shown in the UI, e.g. "Account".
-source_system       e.g. "SFDC". Shown on the dashboard; lets a second source
-                    be added later without a schema change.
-source_object_name  The real object name at source (may differ from the label).
-record_key_column   WHICH source column is the unique identifier — "Id" for
-                    Salesforce. The engine needs this to know what to write
-                    into DQ_VIOLATION.record_key so a violation is actionable.
-active_flag         Retire an object from validation without deleting history.
-created_at          Audit.
+val_rule_types    code, description, dimension, execution_type   (8 rows)
+val_severities    code, description                              (Critical/Warning)
+val_statuses      code, description                              (draft/submitted/
+                                                                  approved/rejected)
 
 --------------------------------------------------------------------------------
-DQ_ELEMENT — the CDEs (critical data elements) per object
+val_rules  -- CONFIG. One row = one rule.
 --------------------------------------------------------------------------------
-element_id          PK. Referenced by rules, violations, metrics.
-object_id           FK -> which object this field belongs to.
-element_name        Display name in the rule form and dashboard.
-source_column_name  The real column name at source. Kept separate from
-                    element_name in case of renames/aliases.
-data_type           Lets the UI offer only sensible rule types per field
-                    (e.g. no Max Length on a date).
-active_flag         Deactivate a CDE without losing its rule/violation history.
-created_at          Audit.
-
-For Account this is seeded with the 16 confirmed CDEs:
-  BillingCity, BillingCountry, BillingPostalCode, BillingState, BillingStreet,
-  Industry, Name, Phone, ShippingCity, ShippingCountry, ShippingPostalCode,
-  ShippingState, ShippingStreet, Type, Website, Region__c
-
-================================================================================
-RULES
-================================================================================
-
---------------------------------------------------------------------------------
-DQ_RULE — the validation logic, stored as DATA not code
---------------------------------------------------------------------------------
-rule_id             PK.
-object_id           FK -> which object.
-element_id          FK -> which field. (For multi-condition, see the note in
-                    Part 1 #8.)
-rule_name           Human label, auto-generated e.g. "BillingCountry — Allowed
-                    Values". Editable.
-rule_type           One of the 8. This is what the UI form and the compiler
-                    both key off.
-dimension           Completeness / Validity / Format / Uniqueness /
-                    Consistency / Ref Integrity. DERIVED from rule_type — the
-                    user never sets it. Drives the heatmap columns.
-severity            Critical or Warning. Almost the only judgement call the
-                    business user actually makes; drives dashboard weighting.
-rule_config_json    ** SOURCE OF TRUTH ** — exactly what the user typed in the
-                    form, e.g. {"values":["US","IN","GB"]}. Never hand-edited.
-condition_expr      ** GENERATED ARTIFACT ** — the compiled SQL predicate.
-                    Regenerated from rule_config_json on every save, so it can
-                    never silently drift out of sync with the config.
-status              draft / submitted / approved / rejected.
-                    THE APPROVAL GATE: the engine only ever loads
-                    status='approved'. A draft rule exists in the table but is
-                    completely inert.
-created_by          Who authored it.
-created_at          When.
-updated_at          Distinguishes a freshly edited draft from a stale one.
-approved_by         WHO approved it — approval needs its own audit trail,
-approved_at         separate from creation, or "approved" means nothing.
-
-================================================================================
-EXECUTION
-================================================================================
+rule_id            PK, Varchar(50). Readable: ACCOUNT_NAME_REQUIRED_001.
+                   Chosen over a UUID because these get discussed in meetings
+                   and read in logs.
+rule_name          Display label.
+source_system      e.g. "SFDC". Stamped from the entity catalog.
+rule_type          FK -> val_rule_types. Picks which SQL template compiles.
+entity_name        Which object. (Replaces the old dq_object FK.)
+field_name         Which column. (Replaces the old dq_element FK.)
+primary_key_field  Which column identifies a record ("Id"). This is what makes
+                   a violation actionable rather than "row 4,782 failed".
+execution_type     QUERY | RECORD. DERIVED from rule_type on save, never
+                   accepted from the client -- otherwise a 'required' rule
+                   could be marked RECORD and take the wrong engine path.
+rule_definition    ** SOURCE OF TRUTH ** the JSON the user configured.
+                   NOTE: the compiled SQL is deliberately NOT stored. It is
+                   regenerated from this on every run, so the two can never
+                   drift out of sync.
+error_message      Optional custom text stamped onto each violation.
+severity           FK -> val_severities. Drives dashboard weighting.
+status             FK -> val_statuses. THE APPROVAL GATE: only 'approved'
+                   rules are ever loaded by the engine. A draft rule exists
+                   but is completely inert.
+active             Retire a rule without deleting its history.
+created_by         Who authored it.
+created_date       When.
+updated_by         Last editor -- changes on ANY edit.
+updated_date       "
+approved_by        ** WHO approved it. ** Kept separate from updated_by
+approved_date      precisely because updated_* changes on any edit and so
+                   cannot serve as an approval record.
+                   Enforced: approved_by != created_by (separation of duties).
 
 --------------------------------------------------------------------------------
-DQ_RUN — one row per validation execution
+val_batches  -- what a user calls "a run": one trigger, 1..N entities
 --------------------------------------------------------------------------------
-run_id              PK. Ties a whole execution together.
-object_id           FK -> which object was validated.
-run_name            Human label for the run history list.
-run_type            file_upload | db_fetch — which ingestion path was used.
-status              running / completed / failed.
-                    The dashboard reads ONLY 'completed' runs, so a partial or
-                    broken run is invisible rather than misleading.
-started_at          Run auditing + duration; also orders the trend chart.
-finished_at         "
-records_scanned     Feeds the "Records Scanned" KPI directly, and is the
-                    denominator for every score in the run.
-source_file_name    Traceability — which upload produced this run.
-error_message       If status='failed', what actually went wrong. Without this
-                    a failed run is a silent gap.
+batch_id           PK autoincrement. DB-generated, so two concurrent triggers
+                   can't collide on the same id.
+batch_name         "Run #3" / "Nightly 02 Aug".
+run_type           file_upload | db_fetch.
+triggered_by       Who clicked it.
+started_at         When.
+
+NOTE: batch STATUS is not stored -- it is derived from the child runs
+(any running -> running; any failed -> completed_with_errors; else
+completed). Deriving it means a crash can't leave a stored status
+permanently wrong.
 
 --------------------------------------------------------------------------------
-DQ_VIOLATION — the failed records (the fix team's worklist)
+val_runs  -- ONE ENTITY's execution inside a batch
 --------------------------------------------------------------------------------
-One row per: failing record x rule x run.
-Expect roughly 30-40% of rows to fail something on a real run, so this is the
-big table — indexed accordingly.
+run_id             PK.
+batch_id           FK -> val_batches.
+entity_name        Which entity this run validated.
+run_type           file_upload | db_fetch.
+status             pending|running|completed|failed. The dashboard reads ONLY
+                   'completed', so a broken run is invisible not misleading.
+started_at         Run auditing + ordering.
+finished_at        "
+records_scanned    Feeds the "Records Scanned" KPI; denominator for scores.
+rules_executed     How many approved rules actually ran.
+source_file_name   Traceability for uploads.
+error_message      If failed, what went wrong.
 
-violation_id        PK.
-run_id              FK -> which run.
-object_id           FK -> which object.
-element_id          FK -> which field.
-rule_id             FK -> which rule flagged it.
-record_key          THE SOURCE Id. This is what makes a violation actionable —
-                    someone can go find that exact record and fix it.
-current_value       The actual bad value, so the drilldown shows what is wrong
-                    without going back to the source system.
-violation_reason    Human-readable message, e.g. "BillingCountry value is not
-                    in the allowed list".
-severity            Denormalized from the rule AT WRITE TIME —
-dimension           so the dashboard can aggregate without a join, AND so
-                    history stays correct even if the rule's severity is later
-                    edited.
-INDEXES             (run_id, object_id), (run_id, rule_id), (run_id, severity)
-                    — at ~2M rows per run the UI would crawl without them.
-
-Deliberately NOT here in V1: fix_status, assigned_to, times_seen, open/closed.
-That is the remediation lifecycle, postponed by decision.
+WHY ONE RUN PER ENTITY: a batch of 4 entities is 4 runs. If Contact fails on
+a missing column, Account still completes and keeps its results. The dashboard
+asks for "latest completed run per entity", so entities validated in different
+batches still show correctly side by side.
 
 --------------------------------------------------------------------------------
-DQ_METRIC — the dashboard's fact table
+val_metrics  -- the dashboard's fact table. One row per rule per run.
 --------------------------------------------------------------------------------
-One row per: rule x run. Only a few hundred rows per run.
-This is the whole reason the dashboard is fast: it NEVER aggregates millions of
-violations live, it reads pre-computed counters.
-
-metric_id           PK.
-run_id              FK.
-object_id           FK.
-element_id          FK.
-rule_id             FK.
-dimension           Denormalized, same reasoning as DQ_VIOLATION.
-severity            "
-records_checked     Denominator. Also feeds "Records Scanned".
-records_failed      Feeds every "Critical Failed Checks" style KPI.
-score_pct           (checked - failed) / checked, computed ONCE at run close.
-                    This is what makes the KPI cards and heatmap instant.
+metric_id          PK.
+run_id             FK -> val_runs.
+rule_id            The rule -- NOT an FK, deliberately: results must outlive
+                   rule edits and deletions.
+entity_name        Denormalized at write time.
+field_name         Denormalized at write time.
+dimension          Denormalized -- so the dashboard never joins to val_rules,
+severity           and so history stays correct if a rule's severity changes.
+records_checked    Denominator.
+records_failed     Feeds the Critical KPI.
+score_pct          Computed ONCE at run close. This is why the dashboard is
+                   instant: it reads a few hundred pre-computed rows, never a
+                   live scan of millions of violations.
 
 --------------------------------------------------------------------------------
-DQ_REFERENCE_VALUE — supports Referential Integrity
+val_violations  -- the fix team's worklist. One row per failing record per rule.
 --------------------------------------------------------------------------------
-id                  PK.
-object_id           FK -> the object these values came from.
-element_id          FK -> the field these values came from.
-value               One DISTINCT value.
-INDEX               (object_id, element_id, value) — this table is hit by a
-                    NOT IN subquery on every ref_integrity check.
-
-Refreshed at the end of a run, but ONLY for elements that some approved
-ref_integrity rule actually points at — bounded work, not "capture all 16 CDEs
-every run just in case". See Part 1 #7 for the full reasoning.
-
-================================================================================
-RUNTIME / TRANSIENT
-================================================================================
+violation_id       PK.
+run_id             FK -> val_runs.
+rule_id            Which rule flagged it (not an FK, same reasoning).
+entity_name        Denormalized.
+field_name         Denormalized.
+record_key         THE SOURCE Id -- what makes a violation actionable.
+current_value      The actual bad value, so triage needs no round trip.
+violation_reason   Human-readable message.
+severity           Denormalized at write time.
+dimension          "
+INDEXES            (run_id, entity_name), (run_id, rule_id), (run_id, severity)
 
 --------------------------------------------------------------------------------
-STG_SOURCE_RECORD — temporary staging, cleared after every run
+val_reference_values  -- supports Referential Integrity
 --------------------------------------------------------------------------------
-id                  Internal surrogate key (NOT the source Id).
-run_id              Scopes this batch to one run; makes cleanup a one-liner.
-record_key          The source Id, carried through so violations can point back.
-<16 CDE columns>    ONLY the fields we actually validate. This is the column
-                    pruning decision: never pull 443 columns when 17 are needed.
-                    Measured impact: the full 443-column Account export costs
-                    ~13 KB/row in pandas — about 63 GB at 5M rows. Pruning to
-                    the CDE columns cuts that by ~90%.
-loaded_at           Shows how stale a stuck run's staging data is.
+id                 PK.
+entity_name        Where these values came from.
+field_name         "
+value              One DISTINCT value.
+INDEX              (entity_name, field_name, value)
 
-NEVER a permanent store. Its entire job is to exist for the duration of one
-validation pass, then be deleted.
+Staging is wiped after every run, so a rule on entity B can't JOIN against
+entity A's staged rows -- they may be gone. This table persists only the
+DISTINCT values of fields an approved ref_integrity rule actually targets.
+Bounded work, not a copy of the source.
 
+--------------------------------------------------------------------------------
+stg_<entity>  -- ONE STAGING TABLE PER ENTITY. Runtime only.
+--------------------------------------------------------------------------------
+stg_account (16 cols), stg_contact (10), stg_product (6), stg_account_team (4)
+
+id                 Surrogate key, NOT the source Id.
+run_id             Scopes the batch; makes cleanup a one-liner.
+record_key         The source Id, carried through to violations.
+<entity columns>   ONLY the declared CDEs -- a 443-column export is pruned to
+                   these. Physical columns (not JSON/EAV) so a compiled rule
+                   can say `WHERE Name IS NULL` against a real, indexable
+                   column.
+loaded_at          Staleness of a stuck run.
+
+Generated at import time from the ENTITIES constant -- there is never a
+runtime CREATE TABLE. Cleared after every run; never a permanent store.
 
 ################################################################################
 HOW A RUN ACTUALLY EXECUTES (and why it scales)
 ################################################################################
 
-  1. Create DQ_RUN (status='running')
-  2. Stage the source into STG_SOURCE_RECORD in 5,000-row batches
+  1. Create val_batches row, then one val_runs row PER ENTITY
+  2. Stage the source into stg_<entity> in 5,000-row batches
      (never loads the whole file into memory)
-  3. Load rules:  SELECT * FROM DQ_RULE
-                  WHERE object_id = ? AND status = 'approved'
+  3. Load rules:  SELECT * FROM val_rules
+                  WHERE entity_name = ? AND status = 'approved' AND active = 1
   4. For EACH rule:
        - compile rule_config_json -> SQL
        - run ONE query; the DATABASE does the work as a set operation.
          Python never loops over data rows — only over rules (dozens).
        - write violations with bulk inserts in 5,000-row chunks
-       - write one DQ_METRIC row
+       - write one val_metrics row
        - COMMIT  (one transaction per rule)
-  5. Refresh DQ_REFERENCE_VALUE for any element other objects depend on
+  5. Refresh val_reference_values for any field other entities depend on
      (must happen BEFORE staging is cleared)
-  6. Clear STG_SOURCE_RECORD
-  7. Mark run 'completed'
+  6. Clear stg_<entity>
+  7. Mark run 'completed'  (batch status is DERIVED from its runs)
 
 WHY IT DOESN'T BREAK AT MILLIONS OF ROWS
   - SQL pushdown: rules are set operations run by the database, not Python
@@ -419,6 +403,109 @@ WHY IT DOESN'T BREAK AT MILLIONS OF ROWS
     run is visible rather than silently half-done.
 
 
+
+################################################################################
+PART 3 — INSPECTING THE DATABASE (Windows + macOS)
+################################################################################
+
+The `sqlite3` command-line tool ships with macOS but NOT with Windows, which
+is why the same command that works on a Mac fails on a Windows laptop. Use the
+Python helper below and the commands are IDENTICAL on both.
+
+--------------------------------------------------------------------------------
+RECOMMENDED — works the same on every OS (no install needed)
+--------------------------------------------------------------------------------
+From the backend/ folder:
+
+  macOS / Linux                        Windows
+  ---------------------------------    ---------------------------------
+  python3 inspect_db.py                python inspect_db.py
+  python3 inspect_db.py val_rules      python inspect_db.py val_rules
+  python3 inspect_db.py val_runs 10    python inspect_db.py val_runs 10
+
+  # any SQL you like
+  python3 inspect_db.py --sql "SELECT * FROM val_rules WHERE status='approved'"
+  python  inspect_db.py --sql "SELECT * FROM val_rules WHERE status='approved'"
+
+(Use the venv's python if the venv is not active:
+   macOS:   ../venv/bin/python3 inspect_db.py
+   Windows: ..\venv\Scripts\python.exe inspect_db.py )
+
+--------------------------------------------------------------------------------
+THE QUERIES YOU ACTUALLY WANT
+--------------------------------------------------------------------------------
+Pass any of these to --sql, or paste into the sqlite3 CLI.
+
+-- every rule, readable
+SELECT rule_id, entity_name, field_name, rule_type, severity, status,
+       created_by, approved_by
+FROM val_rules ORDER BY rule_id;
+
+-- rules the engine will ACTUALLY run (the approval gate)
+SELECT rule_id, entity_name, field_name, rule_type
+FROM val_rules WHERE status='approved' AND active=1;
+
+-- run history: batches and the entities inside them
+SELECT b.batch_id, b.batch_name, b.run_type, r.entity_name, r.status,
+       r.records_scanned, r.rules_executed
+FROM val_batches b JOIN val_runs r ON r.batch_id=b.batch_id
+ORDER BY b.batch_id DESC, r.run_id;
+
+-- scores for the latest run of each entity
+SELECT entity_name, field_name, dimension, severity,
+       records_checked, records_failed, score_pct
+FROM val_metrics
+WHERE run_id IN (SELECT MAX(run_id) FROM val_runs
+                 WHERE status='completed' GROUP BY entity_name)
+ORDER BY score_pct;
+
+-- the fix worklist for one run
+SELECT record_key, entity_name, field_name, current_value, violation_reason
+FROM val_violations WHERE run_id = 1 LIMIT 50;
+
+-- row counts everywhere
+SELECT 'val_rules' t, COUNT(*) n FROM val_rules
+UNION ALL SELECT 'val_batches', COUNT(*) FROM val_batches
+UNION ALL SELECT 'val_runs', COUNT(*) FROM val_runs
+UNION ALL SELECT 'val_metrics', COUNT(*) FROM val_metrics
+UNION ALL SELECT 'val_violations', COUNT(*) FROM val_violations;
+
+-- staging must be EMPTY between runs (it is runtime-only by design)
+SELECT COUNT(*) FROM stg_account;
+
+--------------------------------------------------------------------------------
+IF YOU PREFER THE sqlite3 CLI
+--------------------------------------------------------------------------------
+macOS (built in):
+  cd backend
+  sqlite3 smtc_dq.db
+  .tables
+  .headers on
+  .mode column
+  SELECT * FROM val_rules;
+  .quit
+
+  # one-liner
+  sqlite3 -header -column smtc_dq.db "SELECT * FROM val_rules;"
+
+Windows (sqlite3 is NOT installed by default) -- pick one:
+  1. Download "sqlite-tools" from sqlite.org/download.html, unzip, and either
+     add the folder to PATH or run it by full path:
+         C:\sqlite\sqlite3.exe smtc_dq.db "SELECT * FROM val_rules;"
+  2. Install DB Browser for SQLite (GUI) and open backend\smtc_dq.db
+  3. Just use inspect_db.py above -- no install, same commands as Mac.
+
+NOTE the path separator: macOS uses backend/smtc_dq.db, Windows uses
+backend\smtc_dq.db. inspect_db.py resolves this itself, which is the other
+reason to prefer it.
+
+--------------------------------------------------------------------------------
+RESETTING
+--------------------------------------------------------------------------------
+  python create_tables.py --reset     # drop + recreate everything (no rules)
+  python seed_dummy.py --reset        # reseed the 3 demo dashboard runs
+Both commands are identical on Windows and macOS.
+
 ################################################################################
 CURRENT STATE / WHAT IS NOT BUILT YET
 ################################################################################
@@ -429,7 +516,7 @@ BUILT AND VERIFIED
   - Chunked ingestion (CSV upload + direct DB fetch)
   - Background run execution with status polling
   - Violations captured with source Id, paginated API + streamed CSV export
-  - Dashboard: overview + object drilldown, reading DQ_METRIC only
+  - Dashboard: overview + object drilldown, reading val_metrics only
   - Light / dark theme
 
 NOT BUILT (deliberately, or not yet)
@@ -439,9 +526,12 @@ NOT BUILT (deliberately, or not yet)
     paste into Claude/ChatGPT/Copilot by hand — no LLM is called, because LLM
     data usage is not approved for this project.
   - Rule EDITING (rules can be created and status-changed, not edited).
+  - Scheduled/nightly runs (manual trigger only so far).
   - Violations browser page (the API exists; there is no UI for it yet).
   - Rule preview/dry-run wired into the UI (the endpoint exists).
-  - DB-fetch form in the UI (the endpoint exists; upload-only in the UI).
+  - Real source DB connection: the 'Run from Database' UI is built and the
+    query is generated per entity, but SOURCE_DB_URL must be set on the
+    server. Until then those runs fail with a clear message by design.
   - Auth / users / roles — deferred by decision.
   - Remediation lifecycle on violations — deferred by decision (V1 is
     validation + violation reporting only).

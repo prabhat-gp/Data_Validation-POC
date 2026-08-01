@@ -1,136 +1,199 @@
 """
 test_engine_backtest.py
-------------------------
-End-to-end proof against data_dump/temp.csv (101 real Account rows, the
-reference sample -- the real ~700MB accounts.csv only exists on the office
-laptop). This exercises the EXACT same code path that will run there:
-upload -> stage (chunked) -> compile rules -> execute (SQL pushdown) ->
-violations -> metrics -> dashboard reads.
+-----------------------
+End-to-end proof against data_dump/temp.csv (101 real Account rows -- the
+reference sample; the real ~700MB accounts.csv only exists on the office
+laptop).
 
-Run with:
-    cd backend && /usr/bin/python3 -m pytest tests/test_engine_backtest.py -v
+Runs the FULL pipeline -- stage -> compile -> execute -> metrics -> refresh
+reference values -> clear staging -- exactly as a production run does.
+Expected counts are computed from the CSV itself rather than hardcoded, so a
+failure means engine behaviour changed, not that the fixture drifted.
+
+Run with:  python -m pytest tests/ -v      (from backend/)
 """
 
+import csv
 import json
 import os
 import sys
+from datetime import datetime, timezone
+
+import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from app.models import (  # noqa: E402
+    Base, ValBatch, ValMetric, ValRule, ValRun, ValViolation,
+)
+from app.rule_compiler import execution_type_for  # noqa: E402
+from app.validation_engine import run_validation  # noqa: E402
 
-from app.models import Base, DQObject, DQElement, DQRule, DQRun, DQMetric, DQViolation
-from app import ingestion
-from app.rule_compiler import compile_rule
-from app.validation_engine import run_validation
-
-TEMP_CSV = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                         "data_dump", "temp.csv")
+CSV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data_dump", "temp.csv",
+)
 
 
-def _fresh_session():
-    """Isolated in-memory DB per test run so this never touches smtc_dq.db."""
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    import re
+def utcnow():
+    return datetime.now(timezone.utc)
 
-    @__import__("sqlalchemy").event.listens_for(engine, "connect")
-    def _regexp(dbapi_conn, _):
-        def regexp(pattern, value):
-            return bool(re.search(pattern, value)) if value is not None else False
-        dbapi_conn.create_function("REGEXP", 2, regexp)
+
+@pytest.fixture
+def db(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path}/test.db")
+
+    # REGEXP is not built into SQLite -- register it, same as app/database.py
+    import re as _re
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _add_regexp(conn, _):
+        conn.create_function(
+            "REGEXP", 2,
+            lambda pattern, value: 1 if value is not None and _re.search(pattern, value) else 0,
+        )
 
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, future=True)
-    return Session()
+    session = sessionmaker(bind=engine)()
+    yield session
+    session.close()
 
 
-def _seed_account(db):
-    obj = DQObject(object_name="Account", source_system="SFDC",
-                    source_object_name="Account", record_key_column="Id", active_flag=True)
-    db.add(obj); db.flush()
-    elements = {}
-    for name in ["Name", "Type", "BillingCountry", "Website", "Phone", "Region__c"]:
-        el = DQElement(object_id=obj.object_id, element_name=name, source_column_name=name,
-                       data_type="string", active_flag=True)
-        db.add(el); db.flush()
-        elements[name] = el
+def _csv_rows():
+    with open(CSV_PATH, newline="", encoding="utf-8-sig") as f:
+        return list(csv.DictReader(f))
+
+
+def _make_rule(db, field, rule_type, definition, severity="Warning"):
+    rule = ValRule(
+        rule_id=f"ACCOUNT_{field.upper()}_{rule_type.upper()}",
+        rule_name=f"{field} — {rule_type}",
+        source_system="SFDC",
+        rule_type=rule_type,
+        entity_name="Account",
+        field_name=field,
+        primary_key_field="Id",
+        execution_type=execution_type_for(rule_type),
+        rule_definition=json.dumps(definition),
+        severity=severity,
+        status="approved",              # the engine only ever loads approved rules
+        active=True,
+        created_by="test",
+        created_date=utcnow(),
+        approved_by="approver",         # a different person -- separation of duties
+        approved_date=utcnow(),
+    )
+    db.add(rule)
+    return rule
+
+
+def _make_run(db, entity="Account"):
+    batch = ValBatch(batch_name="backtest", run_type="file_upload", started_at=utcnow())
+    db.add(batch)
+    db.flush()
+    run = ValRun(batch_id=batch.batch_id, entity_name=entity,
+                 run_type="file_upload", status="pending", started_at=utcnow())
+    db.add(run)
     db.commit()
-    return obj, elements
+    return run
 
 
-def test_full_pipeline_against_temp_csv():
-    assert os.path.exists(TEMP_CSV), f"reference file not found: {TEMP_CSV}"
-    db = _fresh_session()
-    obj, elements = _seed_account(db)
+@pytest.mark.skipif(not os.path.exists(CSV_PATH), reason="temp.csv not present")
+def test_full_pipeline_against_real_sample(db):
+    rows = _csv_rows()
 
-    # A handful of rules across different rule_types + the corrected duplicate approach
-    rules_to_create = [
-        ("required", elements["Name"], {}, "Critical", "Completeness"),
-        ("allowed_values", elements["Type"], {"values": ["Owner/Operator", "Product/Service Provider"]}, "Warning", "Validity"),
-        ("unique", elements["Name"], {}, "Warning", "Uniqueness"),
-        ("format_pattern", elements["Website"], {"pattern": r"^(https?://|www\.)"}, "Warning", "Format"),
-    ]
-    for rule_type, element, config, severity, dimension in rules_to_create:
-        compiled = compile_rule(rule_type, element.source_column_name, json.dumps(config))
-        db.add(DQRule(
-            object_id=obj.object_id, element_id=element.element_id,
-            rule_name=f"{element.element_name} {rule_type}", rule_type=rule_type,
-            dimension=dimension, severity=severity, rule_config_json=json.dumps(config),
-            condition_expr=compiled.condition_sql, status="approved",  # pre-approved for the test
-        ))
+    _make_rule(db, "Name", "required", {}, "Critical")
+    _make_rule(db, "BillingCity", "required", {}, "Critical")
+    _make_rule(db, "Name", "unique", {})
     db.commit()
 
-    run = DQRun(object_id=obj.object_id, run_name="backtest", run_type="file_upload", status="running")
-    db.add(run); db.commit(); db.refresh(run)
-
-    run_validation(db, run.run_id, "file_upload", file_path=TEMP_CSV)
+    run = _make_run(db)
+    run_validation(db, run.run_id, "file_upload", file_path=CSV_PATH)
 
     db.refresh(run)
-    assert run.status == "completed", f"run failed: {run.error_message}"
-    assert run.records_scanned == 101, f"expected 101 rows staged, got {run.records_scanned}"
+    assert run.status == "completed", run.error_message
+    assert run.records_scanned == len(rows)
+    assert run.rules_executed == 3
 
-    metrics = db.query(DQMetric).filter(DQMetric.run_id == run.run_id).all()
-    assert len(metrics) == 4, f"expected 4 metric rows (one per rule), got {len(metrics)}"
+    expected_name_blank = sum(1 for r in rows if not (r.get("Name") or "").strip())
+    expected_city_blank = sum(1 for r in rows if not (r.get("BillingCity") or "").strip())
 
-    # staging must be cleared after the run (runtime-only table)
-    from sqlalchemy import text
-    staged_left = db.execute(text("SELECT COUNT(*) FROM stg_source_record WHERE run_id=:r"),
-                              {"r": run.run_id}).scalar()
-    assert staged_left == 0, "staging should be cleared after a completed run"
+    metrics = {m.rule_id: m for m in db.query(ValMetric).filter(ValMetric.run_id == run.run_id)}
+    assert len(metrics) == 3
+    assert metrics["ACCOUNT_NAME_REQUIRED"].records_failed == expected_name_blank
+    assert metrics["ACCOUNT_BILLINGCITY_REQUIRED"].records_failed == expected_city_blank
 
-    print("\n--- Backtest results against data_dump/temp.csv (101 rows) ---")
-    for m in metrics:
-        rule = db.get(DQRule, m.rule_id)
-        print(f"  {rule.rule_name:35s} checked={m.records_checked:<4} failed={m.records_failed:<4} score={m.score_pct}%")
+    # every metric denormalizes entity/field so the dashboard needs no join
+    for m in metrics.values():
+        assert m.entity_name == "Account"
+        assert m.field_name and m.dimension and m.severity
 
-    violation_count = db.query(DQViolation).filter(DQViolation.run_id == run.run_id).count()
-    print(f"  total violations captured: {violation_count}")
-
-    # sanity: every metric's checked count must equal records_scanned (no rule silently skipped rows)
-    for m in metrics:
-        assert m.records_checked == run.records_scanned
+    # staging is runtime-only and must be empty once the run finishes
+    left = db.execute(text("SELECT COUNT(*) FROM stg_account WHERE run_id=:r"),
+                      {"r": run.run_id}).scalar()
+    assert left == 0
 
 
-def test_failed_run_marks_status_and_preserves_error():
-    """A bad rule config must fail the run cleanly, not hang or corrupt state."""
-    db = _fresh_session()
-    obj, elements = _seed_account(db)
+@pytest.mark.skipif(not os.path.exists(CSV_PATH), reason="temp.csv not present")
+def test_scope_filter_narrows_the_row_set(db):
+    """
+    The optional filter must genuinely reduce what's checked. Required on
+    BillingCity across ALL rows fails far more than the same rule scoped to
+    Type='Owner/Operator' -- if the two match, the filter was ignored.
+    """
+    rows = _csv_rows()
+    unfiltered_expected = sum(1 for r in rows if not (r.get("BillingCity") or "").strip())
+    filtered_expected = sum(
+        1 for r in rows
+        if (r.get("Type") or "").strip() == "Owner/Operator"
+        and not (r.get("BillingCity") or "").strip()
+    )
+    assert filtered_expected < unfiltered_expected, "sample can't discriminate; check temp.csv"
 
-    run = DQRun(object_id=obj.object_id, run_type="file_upload", status="running")
-    db.add(run); db.commit(); db.refresh(run)
+    _make_rule(db, "BillingCity", "required", {
+        "filter": {"conditions": [{"field": "Type", "operator": "=", "value": "Owner/Operator"}],
+                   "logic": "AND"},
+    })
+    db.commit()
 
-    try:
-        run_validation(db, run.run_id, "file_upload", file_path="/nonexistent/file.csv")
-    except Exception:
-        pass  # expected -- run_validation re-raises after marking the run failed
+    run = _make_run(db)
+    run_validation(db, run.run_id, "file_upload", file_path=CSV_PATH)
+
+    metric = db.query(ValMetric).filter(ValMetric.run_id == run.run_id).one()
+    assert metric.records_failed == filtered_expected
+    assert db.query(ValViolation).filter(ValViolation.run_id == run.run_id).count() == filtered_expected
+
+
+@pytest.mark.skipif(not os.path.exists(CSV_PATH), reason="temp.csv not present")
+def test_only_approved_rules_execute(db):
+    """The approval gate is structural: a draft rule exists but is inert."""
+    rule = _make_rule(db, "Name", "required", {})
+    rule.status = "draft"
+    db.commit()
+
+    run = _make_run(db)
+    run_validation(db, run.run_id, "file_upload", file_path=CSV_PATH)
+
+    db.refresh(run)
+    assert run.status == "completed"
+    assert run.rules_executed == 0
+    assert db.query(ValMetric).filter(ValMetric.run_id == run.run_id).count() == 0
+
+
+@pytest.mark.skipif(not os.path.exists(CSV_PATH), reason="temp.csv not present")
+def test_missing_column_fails_the_run_loudly(db):
+    """
+    A file that doesn't match the entity must FAIL, not silently validate
+    nothing and report a false 100%.
+    """
+    run = _make_run(db, entity="Contact")   # Account CSV against Contact's columns
+
+    with pytest.raises(Exception):
+        run_validation(db, run.run_id, "file_upload", file_path=CSV_PATH)
 
     db.refresh(run)
     assert run.status == "failed"
-    assert run.error_message is not None
-
-
-if __name__ == "__main__":
-    test_full_pipeline_against_temp_csv()
-    test_failed_run_marks_status_and_preserves_error()
-    print("\nAll backtest checks passed.")
+    assert "missing required columns" in (run.error_message or "")

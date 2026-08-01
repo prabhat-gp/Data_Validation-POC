@@ -1,115 +1,103 @@
 """
 dashboard.py
 ------------
-Every read here comes from DQ_METRIC only (never re-aggregates DQ_VIOLATION
-directly) -- the dashboard is a set of cheap GROUP BY queries over a table
-that's at most a few hundred rows per run, not a live scan of millions of
-violations.
+Every read comes from val_metrics ONLY -- never a live scan of
+val_violations. Metrics are a few hundred rows per run; violations run to
+millions. That is why the dashboard is instant regardless of data volume.
 
-The OVERVIEW endpoints (kpis / heatmap / top-failing / trend / fix-profile)
-aggregate across every ACTIVE object's most-recently-completed run -- the
-schema always supported multiple objects (DQ_OBJECT is a table, not a
-singleton), this is just the query layer catching up to the approved Mock A
-design, which shows one row per object in the heatmap. The DRILLDOWN endpoint
-stays single-object, as it always was.
+Since val_metrics now carries entity_name / field_name / dimension
+denormalized at write time, NOTHING here joins back to val_rules. The
+dashboard can therefore run against a physically separate results database
+with no cross-database join -- exactly what the 3-database split needs.
 """
 
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import DQMetric, DQRun, DQElement, DQObject
+from ..models import ENTITIES, ValBatch, ValMetric, ValRun
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
-def _latest_completed_run(db: Session, object_id: Optional[int] = None) -> Optional[DQRun]:
-    q = db.query(DQRun).filter(DQRun.status == "completed")
-    if object_id is not None:
-        q = q.filter(DQRun.object_id == object_id)
-    return q.order_by(DQRun.finished_at.desc()).first()
+def _latest_completed_run(db: Session, entity_name: Optional[str] = None) -> Optional[ValRun]:
+    q = db.query(ValRun).filter(ValRun.status == "completed")
+    if entity_name is not None:
+        q = q.filter(ValRun.entity_name == entity_name)
+    return q.order_by(ValRun.finished_at.desc()).first()
 
 
-def _current_state(db: Session):
+def _current_state(db: Session, batch_id: Optional[int] = None):
     """
-    One row per active object: its latest completed run + that run's metrics.
+    Latest completed run PER ENTITY + that run's metrics.
 
-    Fixed at 3 queries regardless of how many objects exist. The previous
-    version issued 1 + 2N queries (a run lookup and a metrics lookup per
-    object) and every dashboard endpoint called it -- so a single page load
-    fanned out into dozens of round-trips. Fine on demo data, wasteful at
-    real scale.
+    With no batch_id: batches are deliberately ignored, so if Account last ran
+    in batch 5 and Product in batch 3, you see each entity's most recent known
+    state. That is what keeps the heatmap correct when different batches cover
+    different entities.
+
+    With a batch_id: scoped to just that batch, so the user can inspect one
+    specific run.
+
+    Fixed at 2 queries regardless of entity count.
     """
-    objects = db.query(DQObject).filter(DQObject.active_flag == True).all()  # noqa: E712
-    if not objects:
-        return []
-    obj_by_id = {o.object_id: o for o in objects}
-
-    # 1 query: every completed run, newest first -> keep the first per object
-    runs = (
-        db.query(DQRun)
-        .filter(DQRun.status == "completed", DQRun.object_id.in_(obj_by_id.keys()))
-        .order_by(DQRun.finished_at.desc())
-        .all()
-    )
-    latest: dict[int, DQRun] = {}
+    q = db.query(ValRun).filter(ValRun.status == "completed")
+    if batch_id is not None:
+        q = q.filter(ValRun.batch_id == batch_id)
+    runs = q.order_by(ValRun.finished_at.desc()).all()
+    latest = {}
     for r in runs:
-        latest.setdefault(r.object_id, r)
+        latest.setdefault(r.entity_name, r)
     if not latest:
         return []
 
-    # 1 query: all metrics for just those runs, grouped in memory
     run_ids = [r.run_id for r in latest.values()]
-    all_metrics = db.query(DQMetric).filter(DQMetric.run_id.in_(run_ids)).all()
-    by_run: dict[int, list] = {}
-    for m in all_metrics:
+    by_run = {}
+    for m in db.query(ValMetric).filter(ValMetric.run_id.in_(run_ids)).all():
         by_run.setdefault(m.run_id, []).append(m)
 
     return [
-        {"object": obj_by_id[oid], "run": run, "metrics": by_run.get(run.run_id, [])}
-        for oid, run in latest.items()
+        {"entity_name": name, "run": run, "metrics": by_run.get(run.run_id, [])}
+        for name, run in latest.items()
     ]
 
 
 @router.get("/kpis")
-def kpis(db: Session = Depends(get_db)):
-    state = _current_state(db)
+def kpis(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+    state = _current_state(db, batch_id)
     if not state:
-        raise HTTPException(404, "no completed runs found for any object")
+        raise HTTPException(404, "no completed runs found for any entity")
 
     all_metrics = [m for s in state for m in s["metrics"]]
-    total_checked = sum(m.records_checked for m in all_metrics)
-    total_failed = sum(m.records_failed for m in all_metrics)
-    overall_score = round((total_checked - total_failed) / total_checked * 100, 1) if total_checked else None
+    checked = sum(m.records_checked for m in all_metrics)
+    failed = sum(m.records_failed for m in all_metrics)
+    overall = round((checked - failed) / checked * 100, 1) if checked else None
     critical_failed = sum(m.records_failed for m in all_metrics if m.severity == "Critical")
-    records_scanned = sum(s["run"].records_scanned for s in state)
 
-    total_elements = 0
-    elements_with_rule = 0
+    # Rule coverage: distinct fields with a metric, over the entity's declared CDEs
+    total_fields, covered_fields = 0, 0
     for s in state:
-        total_elements += db.query(func.count(DQElement.element_id)).filter(
-            DQElement.object_id == s["object"].object_id, DQElement.active_flag == True  # noqa: E712
-        ).scalar() or 0
-        elements_with_rule += len({m.element_id for m in s["metrics"]})
-    rule_coverage_pct = round(elements_with_rule / total_elements * 100, 1) if total_elements else 0
+        meta = ENTITIES.get(s["entity_name"])
+        if meta:
+            total_fields += len(meta["columns"])
+        covered_fields += len({m.field_name for m in s["metrics"]})
+    coverage = round(covered_fields / total_fields * 100, 1) if total_fields else 0
 
     return {
-        "overall_dq_score": overall_score,
+        "overall_dq_score": overall,
         "objects_checked": len(state),
         "critical_failed_checks": critical_failed,
-        "records_scanned": records_scanned,
-        "rule_coverage_pct": rule_coverage_pct,
+        "records_scanned": sum(s["run"].records_scanned or 0 for s in state),
+        "rule_coverage_pct": min(coverage, 100.0),
     }
 
 
 @router.get("/heatmap")
-def heatmap(db: Session = Depends(get_db)):
-    """One row per active object (its latest run), one column per dimension."""
-    state = _current_state(db)
+def heatmap(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     rows = []
-    for s in state:
+    for s in _current_state(db, batch_id):
         by_dim = {}
         for m in s["metrics"]:
             d = by_dim.setdefault(m.dimension, {"checked": 0, "failed": 0})
@@ -121,28 +109,27 @@ def heatmap(db: Session = Depends(get_db)):
         }
         checked = sum(v["checked"] for v in by_dim.values())
         failed = sum(v["failed"] for v in by_dim.values())
-        overall = round((checked - failed) / checked * 100, 1) if checked else 0
         rows.append({
-            "object_id": s["object"].object_id, "object_name": s["object"].object_name,
-            "run_id": s["run"].run_id, "dimensions": dims, "overall": overall,
+            "object_id": s["entity_name"],          # entity name is the identifier now
+            "object_name": s["entity_name"],
+            "run_id": s["run"].run_id,
+            "dimensions": dims,
+            "overall": round((checked - failed) / checked * 100, 1) if checked else 0,
         })
     return rows
 
 
 @router.get("/top-failing")
-def top_failing(limit: int = 5, db: Session = Depends(get_db)):
-    state = _current_state(db)
-    # one query for every element name we might need, instead of one per object
-    names = {e.element_id: e.element_name for e in db.query(DQElement).all()}
+def top_failing(limit: int = 5, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     items = []
-    for s in state:
-        elements = names
+    for s in _current_state(db, batch_id):
         for m in s["metrics"]:
             if m.records_failed > 0:
                 items.append({
-                    "element_name": elements.get(m.element_id, "?"),
-                    "object_name": s["object"].object_name,
-                    "score_pct": m.score_pct, "records_failed": m.records_failed,
+                    "element_name": m.field_name,
+                    "object_name": m.entity_name,
+                    "score_pct": m.score_pct,
+                    "records_failed": m.records_failed,
                     "severity": m.severity,
                 })
     items.sort(key=lambda x: x["score_pct"])
@@ -152,49 +139,55 @@ def top_failing(limit: int = 5, db: Session = Depends(get_db)):
 @router.get("/trend")
 def trend(limit: int = 10, db: Session = Depends(get_db)):
     """
-    Aggregates by run_name (e.g. "Run #1"/"Run #2"/"Run #3") across every
-    object -- each object validates on its own run_id, but they share a
-    logical run sequence for the whole-database trend line.
+    Grouped by BATCH, not by a run_name string.
+
+    CAVEAT: if batch 1 covered only Account and batch 2 covered four entities,
+    the aggregate score changes because the COMPOSITION changed, not because
+    quality did. entity_count is returned so the UI can show that rather than
+    implying a trend that isn't there.
     """
     runs = (
-        db.query(DQRun)
-        .filter(DQRun.status == "completed")
-        .order_by(DQRun.finished_at.desc())
+        db.query(ValRun)
+        .filter(ValRun.status == "completed")
+        .order_by(ValRun.batch_id.desc())
         .all()
     )
     if not runs:
         return []
-    metrics_by_run: dict[int, list] = {}
-    for m in db.query(DQMetric).filter(DQMetric.run_id.in_([r.run_id for r in runs])).all():
+
+    metrics_by_run = {}
+    for m in db.query(ValMetric).filter(ValMetric.run_id.in_([r.run_id for r in runs])).all():
         metrics_by_run.setdefault(m.run_id, []).append(m)
 
-    by_name: dict[str, dict] = {}
+    buckets = {}
     for run in runs:
-        key = run.run_name or f"run-{run.run_id}"
-        bucket = by_name.setdefault(key, {"checked": 0, "failed": 0, "critical_failed": 0, "order": run.run_id})
+        b = buckets.setdefault(run.batch_id, {
+            "checked": 0, "failed": 0, "critical_failed": 0, "entities": set(),
+        })
+        b["entities"].add(run.entity_name)
         for m in metrics_by_run.get(run.run_id, []):
-            bucket["checked"] += m.records_checked
-            bucket["failed"] += m.records_failed
+            b["checked"] += m.records_checked
+            b["failed"] += m.records_failed
             if m.severity == "Critical":
-                bucket["critical_failed"] += m.records_failed
-        bucket["order"] = min(bucket["order"], run.run_id)
+                b["critical_failed"] += m.records_failed
 
     out = []
-    for name, b in sorted(by_name.items(), key=lambda kv: kv[1]["order"]):
+    for batch_id in sorted(buckets)[-limit:]:
+        b = buckets[batch_id]
         score = round((b["checked"] - b["failed"]) / b["checked"] * 100, 1) if b["checked"] else None
-        out.append({"run_name": name, "dq_score": score, "critical_failed_checks": b["critical_failed"]})
+        out.append({
+            "run_name": f"Run #{batch_id}",
+            "dq_score": score,
+            "critical_failed_checks": b["critical_failed"],
+            "entity_count": len(b["entities"]),
+        })
     return out
 
 
 @router.get("/fix-profile")
-def fix_profile(db: Session = Depends(get_db)):
-    """
-    V1 has no fix_action/auto-fix concept on DQ_RULE yet -- reporting the
-    Critical vs Warning split instead of an Auto/Manual split, since that's
-    the only classification the V1 schema actually captures.
-    """
-    state = _current_state(db)
-    all_metrics = [m for s in state for m in s["metrics"]]
+def fix_profile(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """Critical vs Warning split -- the only classification V1 actually captures."""
+    all_metrics = [m for s in _current_state(db, batch_id) for m in s["metrics"]]
     counts = {}
     for m in all_metrics:
         counts[m.severity] = counts.get(m.severity, 0) + m.records_failed
@@ -208,86 +201,111 @@ def fix_profile(db: Session = Depends(get_db)):
 
 
 @router.get("/critical-by-dimension")
-def critical_by_dimension(db: Session = Depends(get_db)):
-    """Critical-severity failed checks, grouped by dimension, across every object's latest run."""
-    state = _current_state(db)
-    by_dim: dict[str, int] = {}
-    for s in state:
+def critical_by_dimension(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+    by_dim = {}
+    for s in _current_state(db, batch_id):
         for m in s["metrics"]:
             if m.severity == "Critical":
                 by_dim[m.dimension] = by_dim.get(m.dimension, 0) + m.records_failed
     total = sum(by_dim.values()) or 1
-    rows = sorted(by_dim.items(), key=lambda kv: kv[1], reverse=True)
     return {
         "total": sum(by_dim.values()),
         "breakdown": [
             {"dimension": dim, "count": count, "pct": round(count / total * 100, 1)}
-            for dim, count in rows
+            for dim, count in sorted(by_dim.items(), key=lambda kv: kv[1], reverse=True)
         ],
     }
 
 
-@router.get("/object/{object_id}/drilldown")
-def object_drilldown(object_id: int, run_id: Optional[int] = None, db: Session = Depends(get_db)):
-    run = db.get(DQRun, run_id) if run_id else _latest_completed_run(db, object_id)
+@router.get("/object/{entity_name}/drilldown")
+def entity_drilldown(entity_name: str, run_id: Optional[int] = None, db: Session = Depends(get_db)):
+    """
+    Single-entity detail. Note there is NO join to val_rules -- field_name and
+    dimension come straight off val_metrics.
+    """
+    run = db.get(ValRun, run_id) if run_id else _latest_completed_run(db, entity_name)
     if run is None:
-        raise HTTPException(404, "no completed run found for this object")
+        raise HTTPException(404, "no completed run found for this entity")
 
-    rows = (
-        db.query(DQMetric, DQElement.element_name)
-        .join(DQElement, DQElement.element_id == DQMetric.element_id)
-        .filter(DQMetric.run_id == run.run_id, DQMetric.object_id == object_id)
-        .order_by(DQMetric.score_pct.asc())
+    metrics = (
+        db.query(ValMetric)
+        .filter(ValMetric.run_id == run.run_id, ValMetric.entity_name == entity_name)
+        .order_by(ValMetric.score_pct.asc())
         .all()
     )
-    elements = [
-        {
-            "element_name": name, "dimension": m.dimension, "score_pct": m.score_pct,
-            "records_failed": m.records_failed, "severity": m.severity,
-        }
-        for m, name in rows
-    ]
-    checked = sum(m.records_checked for m, _ in rows)
-    failed = sum(m.records_failed for m, _ in rows)
-    overall = round((checked - failed) / checked * 100, 1) if checked else 0
+    checked = sum(m.records_checked for m in metrics)
+    failed = sum(m.records_failed for m in metrics)
 
     dims = {}
-    for m, _ in rows:
+    for m in metrics:
         d = dims.setdefault(m.dimension, {"checked": 0, "failed": 0})
         d["checked"] += m.records_checked
         d["failed"] += m.records_failed
-    dimension_scores = {
-        d: round((v["checked"] - v["failed"]) / v["checked"] * 100, 1) if v["checked"] else 0
-        for d, v in dims.items()
+
+    return {
+        "run_id": run.run_id,
+        "object_id": entity_name,
+        "object_name": entity_name,
+        "overall_score": round((checked - failed) / checked * 100, 1) if checked else 0,
+        "elements_checked": len(metrics),
+        "records_scanned": run.records_scanned or 0,
+        "dimension_scores": {
+            d: round((v["checked"] - v["failed"]) / v["checked"] * 100, 1) if v["checked"] else 0
+            for d, v in dims.items()
+        },
+        "elements": [
+            {
+                "element_name": m.field_name, "dimension": m.dimension,
+                "score_pct": m.score_pct, "records_failed": m.records_failed,
+                "severity": m.severity,
+            }
+            for m in metrics
+        ],
     }
 
-    obj = db.get(DQObject, object_id)
-    return {
-        "run_id": run.run_id, "object_id": object_id, "object_name": obj.object_name,
-        "overall_score": overall, "elements_checked": len(rows), "records_scanned": run.records_scanned,
-        "dimension_scores": dimension_scores, "elements": elements,
-    }
+
+@router.get("/batch-options")
+def batch_options(run_type: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Batches that actually have completed runs, optionally filtered by data
+    source. Feeds the dashboard's Data Source -> Run ID cascade: pick db_fetch
+    and only db_fetch batches are offered.
+    """
+    q = db.query(ValBatch)
+    if run_type:
+        q = q.filter(ValBatch.run_type == run_type)
+    out = []
+    for b in q.order_by(ValBatch.batch_id.desc()).all():
+        done = db.query(ValRun).filter(
+            ValRun.batch_id == b.batch_id, ValRun.status == "completed"
+        ).count()
+        if done:
+            out.append({
+                "batch_id": b.batch_id,
+                "batch_name": b.batch_name or f"Run #{b.batch_id}",
+                "run_type": b.run_type,
+                "entity_count": done,
+                "started_at": b.started_at,
+            })
+    return out
 
 
 @router.get("/summary")
-def summary(top_limit: int = 5, db: Session = Depends(get_db)):
+def summary(top_limit: int = 5, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     """
     Everything the overview page needs, in ONE request.
 
-    The page previously fired six separate calls, each of which independently
-    rebuilt the same state -- six round trips and six duplicate query sets for
-    one screen. This composes the existing endpoint functions instead of
-    duplicating their logic, so there is still a single source of truth for
-    each calculation.
+    NOTE the trend is deliberately NOT filtered by batch_id. A trend exists to
+    show change over time; scoping it to a single batch would leave one point
+    and destroy the thing it is for. Everything else respects the filter.
     """
-    state = _current_state(db)
-    if not state:
-        raise HTTPException(404, "no completed runs found for any object")
+    if not _current_state(db, batch_id):
+        raise HTTPException(404, "no completed runs found for this selection")
     return {
-        "kpis": kpis(db),
-        "heatmap": heatmap(db),
-        "top_failing": top_failing(top_limit, db),
-        "trend": trend(10, db),
-        "fix_profile": fix_profile(db),
-        "critical_by_dimension": critical_by_dimension(db),
+        "kpis": kpis(batch_id, db),
+        "heatmap": heatmap(batch_id, db),
+        "top_failing": top_failing(top_limit, batch_id, db),
+        "trend": trend(10, db),          # always full history -- see docstring
+        "fix_profile": fix_profile(batch_id, db),
+        "critical_by_dimension": critical_by_dimension(batch_id, db),
     }

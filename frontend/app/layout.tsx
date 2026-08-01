@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import Sidebar from "./components/Sidebar";
 
 export const metadata: Metadata = {
-  title: "SMTC Data Validation Framework",
-  description: "Data quality validation and violation reporting",
+  title: "DQ Score",
+  description: "SMTC data quality validation",
 };
 
 // Applies the saved theme before first paint so dark mode never flashes white.

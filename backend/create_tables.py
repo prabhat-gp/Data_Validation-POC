@@ -1,29 +1,37 @@
 """
 create_tables.py
------------------
-Creates the 7-table V1 schema. Also registers the Account object and its 16
-CDEs in the catalog (DQ_OBJECT / DQ_ELEMENT) -- that's catalog setup, not
-rule data. NO rows are ever inserted into DQ_RULE here; rules are created
-and approved by users through the UI only.
+----------------
+Creates the schema and seeds ONLY the lookup tables (rule types, severities,
+statuses). The entity/column catalog is the ENTITIES constant in models.py --
+there is no catalog table to seed any more.
+
+NO val_rules rows are ever inserted here. Rules are created and approved by
+users through the UI only.
 
 Usage:
-    python create_tables.py            # create tables + seed catalog if empty
+    python create_tables.py            # create tables + seed lookups
     python create_tables.py --reset    # drop everything and recreate
 """
 
 import sys
-from app.database import engine
-from app.models import Base, DQObject, DQElement, CDE_COLUMNS
+
 from sqlalchemy.orm import Session
 
-DATA_TYPE_HINTS = {
-    "Name": "string", "Type": "string", "Industry": "string", "Phone": "string",
-    "Website": "string", "Region__c": "string",
-    "BillingCity": "string", "BillingCountry": "string", "BillingPostalCode": "string",
-    "BillingState": "string", "BillingStreet": "string",
-    "ShippingCity": "string", "ShippingCountry": "string", "ShippingPostalCode": "string",
-    "ShippingState": "string", "ShippingStreet": "string",
-}
+from app.database import engine
+from app.models import Base, ENTITIES, ValRuleType, ValSeverity, ValStatus, staging_table_name
+from app.rule_compiler import RULE_TYPE_DESCRIPTIONS, RULE_TYPE_META, RULE_TYPES
+
+SEVERITIES = [
+    ("Critical", "Must be fixed -- blocks downstream use"),
+    ("Warning", "Should be fixed -- does not block"),
+]
+
+STATUSES = [
+    ("draft", "Being authored; not submitted"),
+    ("submitted", "Awaiting approval"),
+    ("approved", "Approved -- WILL be executed by the engine"),
+    ("rejected", "Rejected by an approver"),
+]
 
 
 def main():
@@ -35,32 +43,33 @@ def main():
     Base.metadata.create_all(engine)
 
     with Session(engine) as db:
-        existing = db.query(DQObject).filter_by(object_name="Account").first()
-        if existing:
-            print("Catalog already seeded (Account object exists) -- skipping.")
-            return
+        if db.query(ValRuleType).count() == 0:
+            for code in RULE_TYPES:
+                dimension, execution_type = RULE_TYPE_META[code]
+                db.add(ValRuleType(
+                    code=code,
+                    description=RULE_TYPE_DESCRIPTIONS.get(code, code),
+                    dimension=dimension,
+                    execution_type=execution_type,
+                ))
+            print(f"Seeded {len(RULE_TYPES)} rule types.")
 
-        account = DQObject(
-            object_name="Account",
-            source_system="SFDC",
-            source_object_name="Account",
-            record_key_column="Id",
-            active_flag=True,
-        )
-        db.add(account)
-        db.flush()  # get account.object_id
+        if db.query(ValSeverity).count() == 0:
+            for code, desc in SEVERITIES:
+                db.add(ValSeverity(code=code, description=desc))
+            print(f"Seeded {len(SEVERITIES)} severities.")
 
-        for name in CDE_COLUMNS:
-            db.add(DQElement(
-                object_id=account.object_id,
-                element_name=name,
-                source_column_name=name,
-                data_type=DATA_TYPE_HINTS.get(name, "string"),
-                active_flag=True,
-            ))
+        if db.query(ValStatus).count() == 0:
+            for code, desc in STATUSES:
+                db.add(ValStatus(code=code, description=desc))
+            print(f"Seeded {len(STATUSES)} statuses.")
+
         db.commit()
-        print(f"Seeded catalog: 1 object (Account), {len(CDE_COLUMNS)} elements.")
-        print("No DQ_RULE rows created -- add rules through the UI/API.")
+
+    print(f"\nEntities (from the ENTITIES constant, no catalog table):")
+    for name, meta in ENTITIES.items():
+        print(f"  {name:<16} -> {staging_table_name(name):<20} {len(meta['columns'])} columns")
+    print("\nNo val_rules rows created -- add rules through the UI.")
 
 
 if __name__ == "__main__":

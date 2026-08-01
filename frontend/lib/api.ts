@@ -1,7 +1,7 @@
 /**
- * Thin fetch wrapper pointing at the FastAPI backend. Every dashboard page
- * reads from these functions -- nothing computes numbers client-side, the
- * backend's DQ_METRIC-backed endpoints are the single source of truth.
+ * Thin fetch wrapper pointing at the FastAPI backend. Every page reads from
+ * these functions -- nothing computes numbers client-side, the backend's
+ * val_metrics-backed endpoints are the single source of truth.
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
@@ -12,6 +12,86 @@ async function get<T>(path: string): Promise<T> {
   return res.json();
 }
 
+async function post<T>(path: string, body: any): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || `${path} -> ${res.status}`);
+  }
+  return res.json();
+}
+
+export { API_BASE };
+
+/* ----------------------------------------------------------------- catalog */
+export interface Entity {
+  entity_name: string;
+  source_system: string;
+  source_object_name: string;
+  primary_key_field: string;
+  columns: string[];
+  approved_rule_count: number;
+}
+
+export interface RuleType {
+  code: string;
+  description: string;
+  dimension: string;
+  execution_type: string;
+}
+
+/* ------------------------------------------------------------------- rules */
+export interface Rule {
+  rule_id: number;
+  rule_name: string;
+  source_system: string;
+  rule_type: string;
+  entity_name: string;
+  field_name: string;
+  primary_key_field: string;
+  execution_type: string;
+  rule_definition: string | null;
+  error_message: string | null;
+  severity: string;
+  status: string;
+  active: boolean;
+  created_by: string;
+  created_date: string;
+  approved_by: string | null;
+  approved_date: string | null;
+}
+
+/* -------------------------------------------------------------------- runs */
+export interface Run {
+  run_id: number;
+  batch_id: number;
+  entity_name: string;
+  run_type: string;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  records_scanned: number;
+  rules_executed: number;
+  source_file_name: string | null;
+  error_message: string | null;
+}
+
+export interface Batch {
+  batch_id: number;
+  batch_name: string | null;
+  run_type: string;
+  triggered_by: string | null;
+  started_at: string;
+  status: string;          // running | completed | completed_with_errors | empty
+  entity_count: number;
+  runs: Run[];
+}
+
+/* --------------------------------------------------------------- dashboard */
 export interface Kpis {
   overall_dq_score: number | null;
   objects_checked: number;
@@ -21,7 +101,7 @@ export interface Kpis {
 }
 
 export interface HeatmapRow {
-  object_id: number;
+  object_id: string;        // entity name is the identifier now
   object_name: string;
   run_id: number;
   dimensions: Record<string, number>;
@@ -40,6 +120,7 @@ export interface TrendPoint {
   run_name: string;
   dq_score: number | null;
   critical_failed_checks: number;
+  entity_count: number;     // composition changed? the chart must say so
 }
 
 export interface FixProfile {
@@ -59,7 +140,7 @@ export interface DrilldownElement {
 
 export interface Drilldown {
   run_id: number;
-  object_id: number;
+  object_id: string;
   object_name: string;
   overall_score: number;
   elements_checked: number;
@@ -73,14 +154,6 @@ export interface CriticalByDimension {
   breakdown: { dimension: string; count: number; pct: number }[];
 }
 
-export interface DqObject {
-  object_id: number;
-  object_name: string;
-  source_system: string;
-  record_key_column: string;
-  active_flag: boolean;
-}
-
 export interface DashboardSummary {
   kpis: Kpis;
   heatmap: HeatmapRow[];
@@ -90,19 +163,52 @@ export interface DashboardSummary {
   critical_by_dimension: CriticalByDimension;
 }
 
+export type Role = "viewer" | "owner" | "admin";
+
+/** Placeholder until Entra ID lands -- then the role comes from the token. */
+export function getRole(): Role {
+  if (typeof window === "undefined") return "viewer";
+  return (localStorage.getItem("role") as Role) || "admin";
+}
+export function setRole(r: Role) { localStorage.setItem("role", r); }
+export function getActor(): string {
+  if (typeof window === "undefined") return "system";
+  return localStorage.getItem("actor") || "prabhat";
+}
+export function setActor(a: string) { localStorage.setItem("actor", a); }
+
+export interface BatchOption {
+  batch_id: number;
+  batch_name: string;
+  run_type: string;
+  entity_count: number;
+  started_at: string;
+}
+
+export interface SourceCheck { ok: boolean; detail: string }
+
 export const api = {
-  /** One round trip for the whole overview page (replaces 6 separate calls). */
-  summary: () => get<DashboardSummary>("/api/dashboard/summary"),
-  kpis: () => get<Kpis>("/api/dashboard/kpis"),
-  heatmap: () => get<HeatmapRow[]>("/api/dashboard/heatmap"),
-  topFailing: (limit = 5) => get<TopFailingItem[]>(`/api/dashboard/top-failing?limit=${limit}`),
-  trend: () => get<TrendPoint[]>("/api/dashboard/trend"),
-  fixProfile: () => get<FixProfile>("/api/dashboard/fix-profile"),
-  criticalByDimension: () => get<CriticalByDimension>("/api/dashboard/critical-by-dimension"),
-  drilldown: (objectId: number) => get<Drilldown>(`/api/dashboard/object/${objectId}/drilldown`),
-  objects: () => get<DqObject[]>("/api/objects"),
-  rules: () => get<any[]>("/api/rules"),
-  runs: () => get<any[]>("/api/runs"),
+  /** One round trip for the whole overview page. */
+  summary: (batchId?: number | null) =>
+    get<DashboardSummary>(`/api/dashboard/summary${batchId ? `?batch_id=${batchId}` : ""}`),
+  batchOptions: (runType?: string) =>
+    get<BatchOption[]>(`/api/dashboard/batch-options${runType ? `?run_type=${runType}` : ""}`),
+  checkSource: () => get<SourceCheck>("/api/runs/source/check"),
+  drilldown: (entityName: string) =>
+    get<Drilldown>(`/api/dashboard/object/${encodeURIComponent(entityName)}/drilldown`),
+
+  entities: () => get<Entity[]>("/api/entities"),
+  ruleTypes: () => get<RuleType[]>("/api/entities/meta/rule-types"),
+
+  rules: () => get<Rule[]>("/api/rules"),
+  createRule: (body: any) => post<Rule>("/api/rules", { ...body, role: getRole() }),
+  transitionRule: (ruleId: number, action: "submit" | "approve" | "reject", actor: string) =>
+    post<Rule>(`/api/rules/${ruleId}/${action}`, { actor, role: getRole() }),
+  ruleSql: (ruleId: number) => get<any>(`/api/rules/${ruleId}/sql`),
+
+  batches: () => get<Batch[]>("/api/runs/batches"),
+  batch: (batchId: number) => get<Batch>(`/api/runs/batches/${batchId}`),
+  runFromDb: (body: any) => post<Batch>("/api/runs/db-fetch", { ...body, role: getRole() }),
 };
 
 export const DIMENSION_ORDER = [

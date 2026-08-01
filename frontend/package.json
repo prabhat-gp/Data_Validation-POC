@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "NEXT_PUBLIC_API_BASE=http://localhost:8000 next dev --turbo",
-    "dev:webpack": "NEXT_PUBLIC_API_BASE=http://localhost:8000 next dev",
+    "clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\"",
+    "predev": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\"",
+    "dev": "next dev --turbo",
+    "dev:webpack": "next dev",
+    "prebuild": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

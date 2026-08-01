@@ -1,108 +1,141 @@
 """
 ingestion.py
 ------------
-Loads source data into STG_SOURCE_RECORD for one run, from either a CSV
-upload or a direct DB fetch. Both paths stream in fixed-size batches -- never
-load the whole source into memory. This matters for real files (the actual
-office-laptop accounts.csv is ~700MB); it's irrelevant for temp.csv (101
-rows) but the code path is identical either way, which is the point: dev
-testing on temp.csv exercises the exact same chunked-insert logic that runs
-against the real file.
+Gets source data into the per-entity staging table.
 
-Only the 16 CDE columns + the record key are read out of the source -- this
-is the "column pruning" decision: never pull 443 columns when 17 are needed.
+Two properties that matter at 10M+ rows:
+
+1. STREAMING -- csv.DictReader iterates the file; a server-side cursor
+   iterates the source DB. The full dataset is never materialised in memory.
+   Rows are inserted in fixed batches (row-at-a-time inserts would take
+   10-20+ minutes where bulk chunks take seconds).
+
+2. COLUMN PRUNING -- only the entity's declared CDE columns are kept. The
+   full Account export is 443 columns wide; we stage ~17. At ~13 KB/row that
+   is the difference between roughly 63 GB and 6 GB at 5M rows.
+
+SECURITY: the source database connection comes from SERVER CONFIG
+(SOURCE_DB_URL env var), never from an API request. A user selects an ENTITY;
+the query is generated here. Users never see, type, or transmit a connection
+string, and no user-supplied SQL is executed against the source system.
 """
 
 import csv
-from typing import Iterable, Optional
+import os
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .models import CDE_COLUMNS, StgSourceRecord
+from .models import ENTITIES, staging_model, staging_table_name
 
 BATCH_SIZE = 5000
 
+# Set at deploy time (env var / Key Vault / Docker secret). Absent in dev,
+# in which case db_fetch runs fail with a clear message instead of silently
+# falling back to something unexpected.
+SOURCE_DB_URL = os.getenv("SOURCE_DB_URL")
 
-def _bulk_insert(db: Session, run_id: int, rows: list[dict]):
+
+def _bulk_insert(db: Session, entity_name: str, rows: list):
     if not rows:
         return
-    db.bulk_insert_mappings(StgSourceRecord, rows)
+    db.bulk_insert_mappings(staging_model(entity_name), rows)
     db.commit()
 
 
-def stage_from_csv(db: Session, run_id: int, file_path: str, record_key_column: str) -> int:
-    """Streams a CSV file into staging in fixed batches. Returns rows staged."""
-    total = 0
-    batch: list[dict] = []
+def _entity_meta(entity_name: str) -> dict:
+    meta = ENTITIES.get(entity_name)
+    if meta is None:
+        raise ValueError(f"Unknown entity {entity_name!r}. Known: {list(ENTITIES)}")
+    return meta
 
+
+def stage_from_csv(db: Session, run_id: int, entity_name: str, file_path: str) -> int:
+    """
+    Streams a CSV into the entity's staging table. Extra columns in the file
+    are ignored; missing required columns fail fast with an explicit message
+    rather than validating nothing and reporting a false 100% score.
+    """
+    meta = _entity_meta(entity_name)
+    columns = meta["columns"]
+    key_col = meta["primary_key_field"]
+
+    total, batch = 0, []
     with open(file_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        missing = [c for c in CDE_COLUMNS if c not in reader.fieldnames]
+        fieldnames = reader.fieldnames or []
+        missing = [c for c in columns if c not in fieldnames]
         if missing:
-            raise ValueError(f"Uploaded file is missing expected CDE columns: {missing}")
-        if record_key_column not in reader.fieldnames:
-            raise ValueError(f"Uploaded file is missing the record key column: {record_key_column}")
+            raise ValueError(
+                f"Uploaded file for {entity_name} is missing required columns: {missing}"
+            )
+        if key_col not in fieldnames:
+            raise ValueError(
+                f"Uploaded file for {entity_name} is missing the key column: {key_col}"
+            )
 
         for row in reader:
-            staged = {"run_id": run_id, "record_key": row.get(record_key_column, "")}
-            for col in CDE_COLUMNS:
+            staged = {"run_id": run_id, "record_key": row.get(key_col, "")}
+            for col in columns:
                 staged[col] = row.get(col)
             batch.append(staged)
             total += 1
             if len(batch) >= BATCH_SIZE:
-                _bulk_insert(db, run_id, batch)
+                _bulk_insert(db, entity_name, batch)
                 batch = []
 
-    _bulk_insert(db, run_id, batch)
+    _bulk_insert(db, entity_name, batch)
     return total
 
 
-def stage_from_db(
-    db: Session,
-    run_id: int,
-    source_connection_url: str,
-    source_query: str,
-    record_key_column: str,
-) -> int:
+def stage_from_db(db: Session, run_id: int, entity_name: str) -> int:
     """
-    Streams rows from an arbitrary external DB (a plain SELECT the user
-    provides, expected to return the record key + the 16 CDE columns) into
-    staging in fixed batches, using a server-side cursor so the whole result
-    set is never materialized in memory at once.
+    Pulls an entity straight from the configured source database.
+
+    The SELECT is GENERATED from the entity catalog -- the user picks an
+    entity, never writes SQL and never supplies credentials. Only the CDE
+    columns are selected, so a wide source table transfers a fraction of the
+    bytes a full CSV export would.
     """
     from sqlalchemy import create_engine
 
-    src_engine = create_engine(source_connection_url)
-    total = 0
-    batch: list[dict] = []
+    if not SOURCE_DB_URL:
+        raise ValueError(
+            "No source database configured. Set the SOURCE_DB_URL environment "
+            "variable on the server to enable 'Run from Database'."
+        )
 
-    with src_engine.connect().execution_options(stream_results=True) as conn:
-        result = conn.execute(text(source_query))
-        columns = result.keys()
-        missing = [c for c in CDE_COLUMNS if c not in columns]
-        if missing:
-            raise ValueError(f"Source query result is missing expected CDE columns: {missing}")
-        if record_key_column not in columns:
-            raise ValueError(f"Source query result is missing the record key column: {record_key_column}")
+    meta = _entity_meta(entity_name)
+    columns = meta["columns"]
+    key_col = meta["primary_key_field"]
+    select_cols = ", ".join([key_col] + columns)
+    query = f"SELECT {select_cols} FROM {meta['source_object_name']}"
 
-        for row in result:
-            row_map = dict(zip(columns, row))
-            staged = {"run_id": run_id, "record_key": row_map.get(record_key_column, "")}
-            for col in CDE_COLUMNS:
-                staged[col] = row_map.get(col)
-            batch.append(staged)
-            total += 1
-            if len(batch) >= BATCH_SIZE:
-                _bulk_insert(db, run_id, batch)
-                batch = []
-
-    _bulk_insert(db, run_id, batch)
-    src_engine.dispose()
+    src_engine = create_engine(SOURCE_DB_URL)
+    total, batch = 0, []
+    try:
+        with src_engine.connect().execution_options(stream_results=True) as conn:
+            result = conn.execute(text(query))
+            result_cols = list(result.keys())
+            for row in result:
+                row_map = dict(zip(result_cols, row))
+                staged = {"run_id": run_id, "record_key": row_map.get(key_col, "")}
+                for col in columns:
+                    staged[col] = row_map.get(col)
+                batch.append(staged)
+                total += 1
+                if len(batch) >= BATCH_SIZE:
+                    _bulk_insert(db, entity_name, batch)
+                    batch = []
+        _bulk_insert(db, entity_name, batch)
+    finally:
+        src_engine.dispose()
     return total
 
 
-def clear_staging(db: Session, run_id: int):
-    """STG_SOURCE_RECORD is runtime-only -- always cleared after a run finishes."""
-    db.execute(text("DELETE FROM stg_source_record WHERE run_id = :run_id"), {"run_id": run_id})
+def clear_staging(db: Session, entity_name: str, run_id: int):
+    """Staging is runtime-only -- always cleared once a run finishes."""
+    table = staging_table_name(entity_name)
+    db.execute(text(f"DELETE FROM {table} WHERE run_id = :run_id"), {"run_id": run_id})
     db.commit()

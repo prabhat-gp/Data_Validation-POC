@@ -1,256 +1,293 @@
 """
 validation_engine.py
----------------------
-The run orchestrator. This is the piece responsible for scaling to millions
-of rows without breaking:
+--------------------
+Executes one entity's validation run.
 
-  1. Every rule compiles to ONE SQL statement (see rule_compiler.py) that the
-     DATABASE executes as a set operation. Python never loops over data rows
-     -- it only loops over RULES (dozens, not millions) and over RESULT rows
-     of a failing query, which it writes back in fixed-size batches.
-  2. Violations are written with bulk_insert_mappings in chunks, one commit
-     per rule (not one commit per row, not one giant transaction for the
-     whole run). If the process dies on rule 40 of 60, rules 1-39's results
-     are already durably committed.
-  3. This function is designed to be called from a background task, not
-     inline in an HTTP request -- see routers/runs.py.
-  4. A run is only ever marked 'completed' after every approved rule has
-     executed successfully and metrics are written; any exception marks it
-     'failed' with error_message set, so a broken run is visible, not silent.
+THE CORE PROPERTY: Python loops over RULES (dozens), never over data rows
+(millions). Each rule becomes ONE SQL statement that the DATABASE executes as
+a set operation. Only failing rows come back, and they are written out in
+bulk batches.
+
+Transaction shape: one commit per rule. If the process dies on rule 40 of 60,
+rules 1-39 are already durable -- partial progress survives a crash. Any
+exception marks the run 'failed' with an error_message so a broken run is
+visible rather than silently half-done.
 """
 
 import json
-import time
-import traceback
+from datetime import datetime, timezone
 from typing import Optional
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .models import DQRun, DQRule, DQElement, DQObject, DQViolation, DQMetric, DQReferenceValue
-from .rule_compiler import compile_rule, RuleCompileError, assert_safe_identifier
 from . import ingestion
+from .models import (
+    ENTITIES, ValMetric, ValReferenceValue, ValRule, ValRun, ValViolation,
+    staging_table_name,
+)
+from .rule_compiler import (
+    RuleCompileError, assert_safe_identifier, compile_rule, dimension_for,
+)
 
 VIOLATION_BATCH_SIZE = 5000
+DUP_VALUE_CHUNK = 500
 
 
-def _run_predicate_rule(db: Session, run_id: int, rule: DQRule, element: DQElement, compiled):
-    """Query-centric rules: one SELECT for the failing rows, one bulk insert."""
-    col = element.source_column_name
+def utcnow():
+    return datetime.now(timezone.utc)
+
+
+def _combine(condition_sql: str, filter_sql: Optional[str]) -> str:
+    """Scope filter AND failing-row condition."""
+    return f"({filter_sql} AND {condition_sql})" if filter_sql else f"({condition_sql})"
+
+
+def _run_predicate_rule(db: Session, run_id: int, rule: ValRule, compiled) -> int:
+    """Query-centric rules: one SELECT for the failing rows, bulk-insert them."""
+    col = assert_safe_identifier(rule.field_name)
+    table = staging_table_name(rule.entity_name)
+    where = _combine(compiled.condition_sql, compiled.filter_sql)
+
     sql = text(
-        f"SELECT record_key, {col} AS current_value FROM stg_source_record "
-        f"WHERE run_id = :run_id AND ({compiled.condition_sql})"
+        f"SELECT record_key, {col} AS current_value FROM {table} "
+        f"WHERE run_id = :run_id AND {where}"
     )
-    params = {"run_id": run_id, **compiled.params}
-    result = db.execute(sql, params)
+    params = {"run_id": run_id, **compiled.params, **compiled.filter_params}
 
-    failed = 0
-    batch = []
-    for row in result:
-        batch.append({
-            "run_id": run_id,
-            "object_id": rule.object_id,
-            "element_id": rule.element_id,
-            "rule_id": rule.rule_id,
-            "record_key": row.record_key,
-            "current_value": row.current_value,
-            "violation_reason": _reason_for(rule.rule_type, col),
-            "severity": rule.severity,
-            "dimension": rule.dimension,
-        })
+    failed, batch = 0, []
+    for row in db.execute(sql, params):
+        batch.append(_violation_row(run_id, rule, row.record_key, row.current_value))
         failed += 1
         if len(batch) >= VIOLATION_BATCH_SIZE:
-            db.bulk_insert_mappings(DQViolation, batch)
+            db.bulk_insert_mappings(ValViolation, batch)
             batch = []
     if batch:
-        db.bulk_insert_mappings(DQViolation, batch)
+        db.bulk_insert_mappings(ValViolation, batch)
     return failed
 
 
-def _run_duplicate_rule(db: Session, run_id: int, rule: DQRule, element: DQElement, compiled):
+def _run_duplicate_rule(db: Session, run_id: int, rule: ValRule, compiled) -> int:
     """
-    Unique rule -- plain SQL GROUP BY/HAVING, same execution path as every
-    other rule (per direction: no separate record-centric machinery).
+    Unique -- plain SQL GROUP BY/HAVING, same execution path as every other
+    rule (no separate record-centric machinery). Two passes, because you
+    cannot tell whether a value is duplicated by looking at one row:
+
+      pass 1: which VALUES occur more than once  (one scan, in the database)
+      pass 2: which ROWS carry those values      (so both sides get reported)
+
+    The scope filter MUST be applied to BOTH passes. Applying it only to pass
+    1 would find duplicates within the filtered subset, then report every row
+    sharing that value -- including rows outside the filter. Silent false
+    positives, very hard to spot in a dashboard.
     """
-    col = compiled.condition_sql  # column name, validated in the compiler
-    dup_values_sql = text(
-        f"SELECT {col} AS v FROM stg_source_record "
-        f"WHERE run_id = :run_id AND {col} IS NOT NULL AND TRIM({col}) <> '' "
-        f"GROUP BY {col} HAVING COUNT(*) > 1"
-    )
-    dup_values = [row.v for row in db.execute(dup_values_sql, {"run_id": run_id})]
+    col = assert_safe_identifier(rule.field_name)
+    table = staging_table_name(rule.entity_name)
+    fsql, fparams = compiled.filter_sql, compiled.filter_params
+    filter_clause = f" AND {fsql}" if fsql else ""
+
+    dup_values = [
+        r.v for r in db.execute(
+            text(
+                f"SELECT {col} AS v FROM {table} "
+                f"WHERE run_id = :run_id{filter_clause} "
+                f"AND {col} IS NOT NULL AND TRIM({col}) <> '' "
+                f"GROUP BY {col} HAVING COUNT(*) > 1"
+            ),
+            {"run_id": run_id, **fparams},
+        )
+    ]
     if not dup_values:
         return 0
 
-    failed = 0
-    batch = []
-    # fetch every record sharing a duplicated value, chunked so a very wide
-    # duplicate set can't build one unbounded IN(...) clause
-    CHUNK = 500
-    for i in range(0, len(dup_values), CHUNK):
-        chunk = dup_values[i:i + CHUNK]
-        placeholders = ", ".join(f":v{i}" for i in range(len(chunk)))
-        params = {f"v{i}": v for i, v in enumerate(chunk)}
-        params["run_id"] = run_id
+    failed, batch = 0, []
+    # chunked so a very wide duplicate set can't build one unbounded IN(...)
+    for i in range(0, len(dup_values), DUP_VALUE_CHUNK):
+        chunk = dup_values[i:i + DUP_VALUE_CHUNK]
+        placeholders = ", ".join(f":v{j}" for j in range(len(chunk)))
+        params = {f"v{j}": v for j, v in enumerate(chunk)}
+        params.update({"run_id": run_id, **fparams})
         rows_sql = text(
-            f"SELECT record_key, {col} AS current_value FROM stg_source_record "
-            f"WHERE run_id = :run_id AND {col} IN ({placeholders})"
+            f"SELECT record_key, {col} AS current_value FROM {table} "
+            f"WHERE run_id = :run_id{filter_clause} AND {col} IN ({placeholders})"
         )
         for row in db.execute(rows_sql, params):
-            batch.append({
-                "run_id": run_id,
-                "object_id": rule.object_id,
-                "element_id": rule.element_id,
-                "rule_id": rule.rule_id,
-                "record_key": row.record_key,
-                "current_value": row.current_value,
-                "violation_reason": f"Duplicate value in {element.element_name}",
-                "severity": rule.severity,
-                "dimension": rule.dimension,
-            })
+            batch.append(_violation_row(run_id, rule, row.record_key, row.current_value))
             failed += 1
             if len(batch) >= VIOLATION_BATCH_SIZE:
-                db.bulk_insert_mappings(DQViolation, batch)
+                db.bulk_insert_mappings(ValViolation, batch)
                 batch = []
     if batch:
-        db.bulk_insert_mappings(DQViolation, batch)
+        db.bulk_insert_mappings(ValViolation, batch)
     return failed
 
 
-def _reason_for(rule_type: str, col: str) -> str:
+def _violation_row(run_id: int, rule: ValRule, record_key, current_value) -> dict:
+    return {
+        "run_id": run_id,
+        "rule_id": rule.rule_id,
+        "entity_name": rule.entity_name,
+        "field_name": rule.field_name,
+        "record_key": record_key,
+        "current_value": current_value,
+        "violation_reason": rule.error_message or _default_reason(rule.rule_type, rule.field_name),
+        "severity": rule.severity,
+        "dimension": dimension_for(rule.rule_type),
+    }
+
+
+def _default_reason(rule_type: str, col: str) -> str:
     return {
         "required": f"{col} is required but missing",
         "allowed_values": f"{col} value is not in the allowed list",
         "format_pattern": f"{col} does not match the expected format",
         "max_length": f"{col} exceeds the maximum allowed length",
+        "unique": f"Duplicate value in {col}",
         "conditional_required": f"{col} is required given another field's value",
-        "ref_integrity": f"{col} does not exist in the referenced object",
+        "ref_integrity": f"{col} does not exist in the referenced entity",
         "multi_condition": f"{col} failed a multi-condition business rule",
     }.get(rule_type, f"{col} failed validation")
 
 
-def _refresh_reference_values(db: Session, object_id: int, run_id: int):
+def _refresh_reference_values(db: Session, entity_name: str, run_id: int):
     """
-    Runs after this object's rules have executed. Refreshes
-    dq_reference_value ONLY for elements that some approved ref_integrity
-    rule (anywhere in the system) actually targets -- bounded work, not
-    "capture all 16 CDEs on every run regardless of whether anyone needs
-    them." One DISTINCT query per targeted element, still query-centric.
+    Runs after this entity's rules have executed, BEFORE staging is cleared.
+    Refreshes val_reference_values ONLY for fields that some approved
+    ref_integrity rule actually targets -- bounded work, not "capture every
+    CDE on every run just in case".
     """
     ref_rules = (
-        db.query(DQRule)
-        .filter(DQRule.rule_type == "ref_integrity", DQRule.status == "approved")
+        db.query(ValRule)
+        .filter(ValRule.rule_type == "ref_integrity", ValRule.status == "approved",
+                ValRule.active == True)  # noqa: E712
         .all()
     )
-    needed_element_ids = set()
+    needed = set()
     for r in ref_rules:
-        cfg = json.loads(r.rule_config_json) if r.rule_config_json else {}
-        if cfg.get("ref_object_id") == object_id and cfg.get("ref_element_id"):
-            needed_element_ids.add(cfg["ref_element_id"])
+        cfg = json.loads(r.rule_definition) if r.rule_definition else {}
+        if cfg.get("ref_entity_name") == entity_name and cfg.get("ref_field_name"):
+            needed.add(cfg["ref_field_name"])
 
-    for element_id in needed_element_ids:
-        element = db.get(DQElement, element_id)
-        if element is None:
-            continue
-        col = assert_safe_identifier(element.source_column_name)
+    if not needed:
+        return
+    table = staging_table_name(entity_name)
+    for field_name in needed:
+        col = assert_safe_identifier(field_name)
         db.execute(
-            text("DELETE FROM dq_reference_value WHERE object_id = :oid AND element_id = :eid"),
-            {"oid": object_id, "eid": element_id},
+            text("DELETE FROM val_reference_values WHERE entity_name = :e AND field_name = :f"),
+            {"e": entity_name, "f": field_name},
         )
         db.execute(
             text(
-                f"INSERT INTO dq_reference_value (object_id, element_id, value) "
-                f"SELECT :oid, :eid, {col} FROM stg_source_record "
+                f"INSERT INTO val_reference_values (entity_name, field_name, value) "
+                f"SELECT :e, :f, {col} FROM {table} "
                 f"WHERE run_id = :run_id AND {col} IS NOT NULL AND TRIM({col}) <> '' "
                 f"GROUP BY {col}"
             ),
-            {"oid": object_id, "eid": element_id, "run_id": run_id},
+            {"e": entity_name, "f": field_name, "run_id": run_id},
         )
-    if needed_element_ids:
-        db.commit()
+    db.commit()
 
 
 def run_validation(
     db: Session,
     run_id: int,
-    source_kind: str,               # "file_upload" | "db_fetch"
+    source_kind: str,                      # "file_upload" | "db_fetch"
     file_path: Optional[str] = None,
-    db_source_url: Optional[str] = None,
-    db_source_query: Optional[str] = None,
+    rule_ids: Optional[list] = None,       # None/empty = all approved rules
 ):
     """
-    Entry point called from a background task (see routers/runs.py). Owns
-    the whole lifecycle of one run: stage -> validate -> metrics -> cleanup.
+    Owns the whole lifecycle of ONE entity's run:
+        stage -> validate -> metrics -> refresh refs -> clear staging.
+    Called from a background task (see routers/runs.py), never inline in a
+    request -- a multi-minute job would otherwise blow the HTTP timeout.
     """
-    run = db.get(DQRun, run_id)
-    obj = db.get(DQObject, run.object_id)
+    run = db.get(ValRun, run_id)
+    entity = run.entity_name
+    meta = ENTITIES.get(entity)
+    if meta is None:
+        raise ValueError(f"Unknown entity {entity!r}")
+
     try:
-        # 1. Stage
+        # started_at is stamped HERE, when execution actually begins -- not when
+        # the row was queued at trigger time. Otherwise every run in a batch
+        # shares a timestamp and the progress display is meaningless.
+        run.status = "running"
+        run.started_at = utcnow()
+        db.commit()
+
+        # 1. Which rules are we running? The approval gate lives here: only
+        #    approved + active rules are ever loaded.
+        q = db.query(ValRule).filter(
+            ValRule.entity_name == entity,
+            ValRule.status == "approved",
+            ValRule.active == True,  # noqa: E712
+        )
+        if rule_ids:
+            q = q.filter(ValRule.rule_id.in_(rule_ids))
+        rules = q.all()
+
+        # 2. Stage. Only the columns the selected rules actually reference are
+        #    kept -- a 443-column export is pruned to a handful.
         if source_kind == "file_upload":
-            records_scanned = ingestion.stage_from_csv(db, run_id, file_path, obj.record_key_column)
+            records_scanned = ingestion.stage_from_csv(db, run_id, entity, file_path)
         elif source_kind == "db_fetch":
-            records_scanned = ingestion.stage_from_db(
-                db, run_id, db_source_url, db_source_query, obj.record_key_column
-            )
+            records_scanned = ingestion.stage_from_db(db, run_id, entity)
         else:
             raise ValueError(f"Unknown source_kind: {source_kind}")
 
         run.records_scanned = records_scanned
+        run.rules_executed = len(rules)
         db.commit()
 
-        # 2. Load only APPROVED rules -- this is the structural approval gate
-        rules = (
-            db.query(DQRule)
-            .filter(DQRule.object_id == run.object_id, DQRule.status == "approved")
-            .all()
-        )
-
-        # 3. Execute each rule as its own transaction (see module docstring)
+        # 3. Execute each rule as its own transaction
         for rule in rules:
-            element = db.get(DQElement, rule.element_id)
             try:
-                compiled = compile_rule(rule.rule_type, element.source_column_name, rule.rule_config_json)
+                compiled = compile_rule(rule.rule_type, rule.field_name, rule.rule_definition)
             except RuleCompileError:
-                # a malformed rule shouldn't take down the whole run
-                continue
+                continue  # a malformed rule must not take down the whole run
 
             if compiled.mode == "duplicate":
-                failed = _run_duplicate_rule(db, run_id, rule, element, compiled)
+                failed = _run_duplicate_rule(db, run_id, rule, compiled)
             else:
-                failed = _run_predicate_rule(db, run_id, rule, element, compiled)
+                failed = _run_predicate_rule(db, run_id, rule, compiled)
 
-            score_pct = 0.0 if records_scanned == 0 else round((records_scanned - failed) / records_scanned * 100, 2)
-            db.add(DQMetric(
+            score = 0.0 if records_scanned == 0 else round(
+                (records_scanned - failed) / records_scanned * 100, 2
+            )
+            db.add(ValMetric(
                 run_id=run_id,
-                object_id=rule.object_id,
-                element_id=rule.element_id,
                 rule_id=rule.rule_id,
-                dimension=rule.dimension,
+                entity_name=entity,
+                field_name=rule.field_name,
+                dimension=dimension_for(rule.rule_type),
                 severity=rule.severity,
                 records_checked=records_scanned,
                 records_failed=failed,
-                score_pct=score_pct,
+                score_pct=score,
             ))
             db.commit()   # one commit per rule -- partial progress survives a crash
 
-        # 4. Refresh persisted reference values for any element other objects'
-        #    ref_integrity rules depend on -- must happen BEFORE staging is
-        #    cleared, since this is the only place those values are read from.
-        _refresh_reference_values(db, run.object_id, run_id)
+        # 4. Capture reference values other entities' ref_integrity rules need.
+        #    MUST precede step 5 -- staging is the only place these come from.
+        _refresh_reference_values(db, entity, run_id)
 
-        # 5. Staging is runtime-only -- clear it now that metrics are written
-        ingestion.clear_staging(db, run_id)
+        # 5. Staging is runtime-only, never a permanent store.
+        ingestion.clear_staging(db, entity, run_id)
 
         run.status = "completed"
-        from datetime import datetime, timezone
-        run.finished_at = datetime.now(timezone.utc)
+        run.finished_at = utcnow()
         db.commit()
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- a failed run must be visible, not silent
         db.rollback()
-        run = db.get(DQRun, run_id)
+        run = db.get(ValRun, run_id)
         run.status = "failed"
-        run.error_message = f"{exc}\n{traceback.format_exc()[-2000:]}"
-        from datetime import datetime, timezone
-        run.finished_at = datetime.now(timezone.utc)
+        run.error_message = str(exc)[:2000]
+        run.finished_at = utcnow()
         db.commit()
+        try:
+            ingestion.clear_staging(db, entity, run_id)
+        except Exception:  # noqa: BLE001
+            pass
         raise
