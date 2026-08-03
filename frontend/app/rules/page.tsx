@@ -1,66 +1,67 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, Entity, Role, Rule, RuleType, getActor, getRole } from "@/lib/api";
+import React, { useEffect, useState } from "react";
+import {
+  Entity, Role, Rule, RuleType, SEVERITIES, STATUSES, api, getActor, getRole,
+} from "@/lib/api";
 
-interface Condition { field: string; operator: string; value: string }
-
-const OPERATORS = [
-  { code: "=", label: "equals" },
-  { code: "!=", label: "not equals" },
-  { code: "in", label: "is one of" },
-  { code: "is_null", label: "is empty" },
-  { code: "is_not_null", label: "is not empty" },
-];
-
-/** One worked example per rule type, shown for the CURRENT selection only. */
-interface Guide { plain: string; example: string; sql: string }
-
-const RULE_GUIDE: Record<string, Guide> = {
-  required: {
-    plain: "The field must not be empty. Any blank value is a violation.",
+/** Plain-English guide + the SQL each type becomes, shown for the current selection only. */
+const GUIDE: Record<string, { plain: string; example: string; sql: string }> = {
+  COMPLETENESS: {
+    plain: "The field must not be empty. Any blank or NULL value is a violation.",
     example: "Every Account must have a Name.",
     sql: "WHERE Name IS NULL OR TRIM(Name) = ''",
   },
-  allowed_values: {
-    plain: "The value must be one of a fixed list you provide.",
-    example: "BillingCountry may only be USA, India or UK.",
-    sql: "WHERE BillingCountry NOT IN ('USA','India','UK')",
-  },
-  format_pattern: {
-    plain: "The value must match a pattern (regex). Used for emails, URLs, codes.",
+  VALIDITY: {
+    plain: "The value must match a pattern (regex). Used for emails, URLs and codes.",
     example: "Website must start with http:// or https://",
     sql: "WHERE NOT REGEXP('^https?://', Website)",
   },
-  max_length: {
-    plain: "The value must not be longer than the limit you set.",
-    example: "BillingPostalCode must be 20 characters or fewer.",
-    sql: "WHERE LENGTH(BillingPostalCode) > 20",
-  },
-  unique: {
+  RANGE: {
     plain:
-      "No two records may share the same value. This is the only rule type that has to compare rows against each other — it runs as GROUP BY / HAVING.",
-    example: "Two Accounts must not have the same Name.",
-    sql: "GROUP BY Name HAVING COUNT(*) > 1",
+      "A numeric value must fall between a minimum and maximum. Non-numeric text is skipped by default — that is a Validity problem, not a Range one.",
+    example: "ORDER_AMOUNT must be between 0 and 100000.",
+    sql: "WHERE CAST(ORDER_AMOUNT AS REAL) < 0 OR CAST(ORDER_AMOUNT AS REAL) > 100000",
   },
-  conditional_required: {
-    plain: "A field becomes mandatory only when another field has a specific value.",
-    example: "If Type is 'Owner/Operator', then Phone must be filled in.",
-    sql: "WHERE Type = 'Owner/Operator' AND (Phone IS NULL OR TRIM(Phone) = '')",
-  },
-  ref_integrity: {
+  UNIQUENESS: {
     plain:
-      "The value must already exist in another entity's field — the classic foreign-key check. It only sees values captured the last time that entity was validated, so run the referenced entity first.",
-    example: "Every Account.BillingCountry must already appear in Contact.MailingCountry.",
-    sql: "WHERE BillingCountry NOT IN (SELECT value FROM val_reference_values WHERE …)",
+      "No two records may share the same value. Leave Field empty and list several fields to check a combination. Runs as one query — GROUP BY/HAVING in a subquery joined back, so BOTH sides of a duplicate are reported.",
+    example: "No two Customers may share FIRST_NAME + LAST_NAME + DOB.",
+    sql: "JOIN (SELECT x FROM t GROUP BY x HAVING COUNT(*) > 1) D ON t.x = D.x",
   },
-  multi_condition: {
+  REFERENTIAL_INTEGRITY: {
     plain:
-      "Chain several conditions on the SAME record with AND/OR, then either require a field or just flag the record.",
-    example: "If Type = 'Owner/Operator' AND BillingCountry = 'USA', then BillingCity must be filled in.",
-    sql: "WHERE (Type='Owner/Operator' AND BillingCountry='USA') AND (BillingCity IS NULL OR …)",
+      "The value must exist in another entity — the classic foreign-key check. The lookup entity must be included in the same run so the join has data.",
+    example: "Every ORDERS.PART_NUMBER must exist in Part Master.",
+    sql: "LEFT JOIN PART_MASTER P ON O.PART_NUMBER = P.PART_NUMBER WHERE P.PART_NUMBER IS NULL",
+  },
+  AGGREGATION: {
+    plain:
+      "Group the records and test a measure per group. The violation is a GROUP, not a single record, so the score is groups-passing over groups-checked.",
+    example: "Flag any customer with more than 3 orders.",
+    sql: "GROUP BY CUSTOMER_ID HAVING COUNT(*) > 3",
+  },
+  ALLOWED_VALUES: {
+    plain: "The value must be one of a fixed list you provide.",
+    example: "COUNTRY may only be US, IN, CA or UK.",
+    sql: "WHERE COUNTRY NOT IN ('US','IN','CA','UK')",
+  },
+  CROSS_FIELD_SIMPLE: {
+    plain:
+      "A condition across several fields of the SAME record. Only this entity's own columns may be used.",
+    example: "If COUNTRY = 'US' then STATE must not be empty.",
+    sql: "WHERE COUNTRY='US' AND STATE IS NULL",
+  },
+  CUSTOM_SQL: {
+    plain:
+      "A custom expression over this entity's columns. Statements, comments and DDL/DML are rejected — it is not an arbitrary-SQL backdoor.",
+    example: "Flag phone numbers shorter than 7 characters.",
+    sql: "WHERE LENGTH(TRIM(PHONE)) < 7",
   },
 };
+
+const AGG_FUNCS = ["COUNT", "SUM", "AVG", "MIN", "MAX"];
+const OPS = [">", ">=", "<", "<=", "=", "!="];
 
 export default function RulesPage() {
   const [entities, setEntities] = useState<Entity[]>([]);
@@ -69,128 +70,162 @@ export default function RulesPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const [actor, setActorLocal] = useState("prabhat");
+  const [role, setRoleLocal] = useState<Role>("admin");
+  const [fEntity, setFEntity] = useState("");
+  const [fStatus, setFStatus] = useState("");
+
   // form
   const [entityName, setEntityName] = useState("");
   const [fieldName, setFieldName] = useState("");
-  const [ruleType, setRuleType] = useState("required");
-  const [severity, setSeverity] = useState("Warning");
-  const [configText, setConfigText] = useState("");
-  const [actor, setActorLocal] = useState("prabhat");
-  const [role, setRoleLocal] = useState<Role>("admin");
-  const [filterEntity, setFilterEntity] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
+  const [ruleType, setRuleType] = useState("COMPLETENESS");
+  const [severity, setSeverity] = useState("WARNING");
+  const [ruleName, setRuleName] = useState("");
+  const [errMsg, setErrMsg] = useState("");
 
-  // ref-integrity
-  const [refEntity, setRefEntity] = useState("");
-  const [refField, setRefField] = useState("");
-
-  // multi-condition
-  const [conditions, setConditions] = useState<Condition[]>([{ field: "", operator: "=", value: "" }]);
-  const [logic, setLogic] = useState<"AND" | "OR">("AND");
-  const [thenType, setThenType] = useState<"require" | "flag">("require");
-  const [thenField, setThenField] = useState("");
-
-  // optional scope filter (available on EVERY rule type)
-  const [useFilter, setUseFilter] = useState(false);
-  const [filterConds, setFilterConds] = useState<Condition[]>([{ field: "", operator: "=", value: "" }]);
-  const [filterLogic, setFilterLogic] = useState<"AND" | "OR">("AND");
-
-  const isMulti = ruleType === "multi_condition";
-  const isRef = ruleType === "ref_integrity";
+  // per-type config
+  const [pattern, setPattern] = useState("");
+  const [minV, setMinV] = useState("");
+  const [maxV, setMaxV] = useState("");
+  const [flagBadNum, setFlagBadNum] = useState(false);
+  const [multiFields, setMultiFields] = useState<string[]>([]);
+  const [lookupEntity, setLookupEntity] = useState("");
+  const [lookupField, setLookupField] = useState("");
+  const [aggFn, setAggFn] = useState("COUNT");
+  const [aggField, setAggField] = useState("*");
+  const [groupBy, setGroupBy] = useState<string[]>([]);
+  const [aggOp, setAggOp] = useState(">");
+  const [threshold, setThreshold] = useState("");
+  const [allowed, setAllowed] = useState("");
+  const [expression, setExpression] = useState("");
+  const [editing, setEditing] = useState<number | null>(null);
+  const [menuFor, setMenuFor] = useState<number | null>(null);
+  const [detail, setDetail] = useState<Rule | null>(null);
 
   const entity = entities.find((e) => e.entity_name === entityName);
   const columns = entity?.columns || [];
-  const refColumns = entities.find((e) => e.entity_name === refEntity)?.columns || [];
+  const lookupEnt = entities.find((e) => e.entity_name === lookupEntity);
+  const lookupChoices = lookupEnt
+    ? [lookupEnt.primary_key_field, ...lookupEnt.columns]
+    : [];
 
   useEffect(() => { setActorLocal(getActor()); setRoleLocal(getRole()); }, []);
 
   useEffect(() => {
     Promise.all([api.entities(), api.ruleTypes(), api.rules()])
       .then(([ents, types, rs]) => {
-        setEntities(ents);
-        setRuleTypes(types);
-        setRules(rs);
-        if (ents.length) {
-          setEntityName(ents[0].entity_name);
-          setRefEntity(ents[0].entity_name);
-        }
+        setEntities(ents); setRuleTypes(types); setRules(rs);
+        if (ents.length) { setEntityName(ents[0].entity_name); setLookupEntity(ents[0].entity_name); }
       })
       .catch((e) => setError(String(e.message || e)));
   }, []);
 
-  useEffect(() => { setFieldName(""); }, [entityName]);
-  useEffect(() => { setRefField(""); }, [refEntity]);
+  useEffect(() => { setFieldName(""); setMultiFields([]); setGroupBy([]); }, [entityName]);
+  useEffect(() => { setLookupField(""); }, [lookupEntity]);
 
-  function refresh() { api.rules().then(setRules).catch(() => {}); }
+  const refresh = () => api.rules().then(setRules).catch(() => {});
 
-  function buildDefinition(): any {
-    const def: any = {};
-    if (ruleType === "allowed_values") {
-      def.values = configText.split(",").map((s) => s.trim()).filter(Boolean);
-    } else if (ruleType === "format_pattern") {
-      def.pattern = configText.trim();
-    } else if (ruleType === "max_length") {
-      def.max_length = parseInt(configText, 10);
-    } else if (ruleType === "conditional_required") {
-      const [f, v] = configText.split(":");
-      def.if_field = (f || "").trim();
-      def.if_value = (v || "").trim();
-    } else if (isRef) {
-      def.ref_entity_name = refEntity;
-      def.ref_field_name = refField;
-    } else if (isMulti) {
-      def.conditions = conditions.filter((c) => c.field);
-      def.logic = logic;
-      def.then = thenType === "require" ? { type: "require", field: thenField } : { type: "flag" };
+  function definition(): any {
+    switch (ruleType) {
+      case "VALIDITY":  return { pattern };
+      case "RANGE": {
+        const d: any = {};
+        if (minV !== "") d.min = Number(minV);
+        if (maxV !== "") d.max = Number(maxV);
+        if (flagBadNum) d.onNonNumeric = "flag";
+        return d;
+      }
+      case "UNIQUENESS": return multiFields.length > 1 ? { fields: multiFields } : {};
+      case "REFERENTIAL_INTEGRITY": return { lookupTable: lookupEntity, lookupField };
+      case "AGGREGATION": return {
+        aggregateFunction: aggFn, aggregateField: aggField,
+        groupBy, operator: aggOp, threshold: Number(threshold),
+      };
+      case "ALLOWED_VALUES": return {
+        allowedValues: allowed.split(",").map((v) => v.trim()).filter(Boolean),
+      };
+      case "CROSS_FIELD_SIMPLE":
+      case "CUSTOM_SQL": return { expression };
+      default: return {};
     }
-    if (useFilter) {
-      const conds = filterConds.filter((c) => c.field);
-      if (conds.length) def.filter = { conditions: conds, logic: filterLogic };
-    }
-    return def;
   }
 
-  async function createRule() {
-    setError(null); setNotice(null);
-    const effectiveField = isMulti
-      ? (thenType === "require" ? thenField : conditions[0]?.field)
-      : fieldName;
-    if (!entityName || !effectiveField) {
-      setError("Pick an entity and a field first.");
-      return;
-    }
-    try {
-      const r = await api.createRule({
-        entity_name: entityName,
-        field_name: effectiveField,
-        rule_type: ruleType,
-        severity,
-        rule_definition: buildDefinition(),
-        created_by: actor,
-      });
-      setNotice(`Created rule #${r.rule_id} as a draft.`);
-      setConfigText("");
-      refresh();
-    } catch (e: any) { setError(String(e.message || e)); }
+  function loadForEdit(r: Rule) {
+    const d = JSON.parse(r.rule_definition || "{}");
+    setEditing(r.rule_id);
+    setEntityName(r.entity_name); setRuleType(r.rule_type);
+    setFieldName(r.field_name || ""); setSeverity(r.severity);
+    setRuleName(r.rule_name || ""); setErrMsg(r.error_message || "");
+    setPattern(d.pattern || ""); setMinV(d.min ?? ""); setMaxV(d.max ?? "");
+    setFlagBadNum(d.onNonNumeric === "flag");
+    setMultiFields(d.fields || []);
+    setLookupEntity(d.lookupTable || ""); setLookupField(d.lookupField || "");
+    setAggFn(d.aggregateFunction || "COUNT"); setAggField(d.aggregateField || "*");
+    setGroupBy(d.groupBy || []); setAggOp(d.operator || ">");
+    setThreshold(d.threshold ?? "");
+    setAllowed((d.allowedValues || []).join(", "));
+    setExpression(d.expression || "");
+    setMenuFor(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  async function transition(ruleId: number, action: "submit" | "approve" | "reject") {
+  function cancelEdit() { setEditing(null); clearForm(); }
+
+  /** Reset every field the form collects, back to defaults. */
+  function clearForm() {
+    setFieldName(""); setRuleType("COMPLETENESS"); setSeverity("WARNING");
+    setRuleName(""); setErrMsg("");
+    setPattern(""); setMinV(""); setMaxV(""); setFlagBadNum(false);
+    setMultiFields([]); setLookupField(""); setGroupBy([]);
+    setAggFn("COUNT"); setAggField("*"); setAggOp(">"); setThreshold("");
+    setAllowed(""); setExpression("");
     setError(null); setNotice(null);
+  }
+
+  async function create() {
+    setError(null); setNotice(null);
+    const effField = ruleType === "UNIQUENESS" && multiFields.length > 1 ? "" : fieldName;
     try {
-      await api.transitionRule(ruleId, action, actor);
+      const body = {
+        entity_name: entityName, field_name: effField, rule_type: ruleType,
+        severity, rule_name: ruleName || undefined,
+        error_message: errMsg || undefined,
+        rule_definition: definition(), created_by: actor,
+      };
+      if (editing) {
+        const r = await api.updateRule(editing, body);
+        setNotice(`Rule #${r.rule_id} saved — status is now ${r.status}.`);
+        setEditing(null);
+      } else {
+        const r = await api.createRule(body);
+        setNotice(`Created rule #${r.rule_id} as DRAFT.`);
+      }
       refresh();
     } catch (e: any) {
       setError(String(e.message || e));
-      window.scrollTo({ top: 0, behavior: "smooth" });   // the banner is up top
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }
+
+  async function act(id: number, what: string) {
+    setError(null); setNotice(null);
+    try {
+      if (what === "retire") await api.retireRule(id, actor);
+      else if (what === "reactivate") await api.reactivateRule(id, actor);
+      else await api.transitionRule(id, what as any, actor);
+      refresh();
+    } catch (e: any) {
+      setError(String(e.message || e));
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
 
   const shown = rules.filter(
-    (r) => (!filterEntity || r.entity_name === filterEntity) &&
-           (!filterStatus || r.status === filterStatus)
+    (r) => (!fEntity || r.entity_name === fEntity) && (!fStatus || r.status === fStatus)
   );
   const isAdmin = role === "admin";
-  const guide = RULE_GUIDE[ruleType];
+  const guide = GUIDE[ruleType];
+  const needsField = !(ruleType === "UNIQUENESS" && multiFields.length > 1);
 
   return (
     <>
@@ -211,124 +246,175 @@ export default function RulesPage() {
         {notice && <div className="banner b-ok">{notice}</div>}
 
         <section className="card" style={{ marginBottom: 16 }}>
-          <h2>New Rule</h2>
-
+          <div className="sec-head">
+            <h2>{editing ? `Edit Rule #${editing}` : "New Rule"}</h2>
+            {editing && <span className="count">editing</span>}
+            <span className="spacer" />
+            <button className="chip-link" onClick={editing ? cancelEdit : clearForm}>
+              {editing ? "Cancel edit" : "Clear"}
+            </button>
+          </div>
           <div className="grid2">
-            <Field label="Entity">
+            <Fld label="Entity">
               <select value={entityName} onChange={(e) => setEntityName(e.target.value)}>
                 {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
               </select>
-            </Field>
-
-            {!isMulti && (
-              <Field label="Field">
+            </Fld>
+            <Fld label="Rule Type">
+              <select value={ruleType} onChange={(e) => setRuleType(e.target.value)}>
+                {ruleTypes.map((t) => <option key={t.code} value={t.code}>{t.code.replace(/_/g, " ")}</option>)}
+              </select>
+            </Fld>
+            {needsField && (
+              <Fld label="Field">
                 <select value={fieldName} onChange={(e) => setFieldName(e.target.value)}>
                   <option value="">Select a field…</option>
                   {columns.map((c) => <option key={c}>{c}</option>)}
                 </select>
-              </Field>
+              </Fld>
             )}
-
-            <Field label="Rule Type">
-              <select value={ruleType} onChange={(e) => setRuleType(e.target.value)}>
-                {ruleTypes.map((t) => <option key={t.code} value={t.code}>{labelFor(t.code)}</option>)}
-              </select>
-            </Field>
-
-            <Field label="Severity">
+            <Fld label="Severity">
               <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
-                <option>Critical</option>
-                <option>Warning</option>
+                {SEVERITIES.map((s) => <option key={s}>{s}</option>)}
               </select>
-            </Field>
-
-            {["allowed_values", "format_pattern", "max_length", "conditional_required"].includes(ruleType) && (
-              <Field label={configLabel(ruleType)}>
-                <input className="txt" value={configText} placeholder={configPlaceholder(ruleType)}
-                       onChange={(e) => setConfigText(e.target.value)} />
-              </Field>
-            )}
+            </Fld>
           </div>
 
-          {isRef && (
-            <div className="subpanel accent">
-              <p className="mini">
-                The <b>Field</b> above is the column on <b>{entityName}</b> being checked.
-                Below, choose which entity/field it must exist in.
+          {/* ---- per-type configuration ---- */}
+          {ruleType === "VALIDITY" && (
+            <Cfg><Fld label="Pattern (regex)">
+              <input className="txt" value={pattern} placeholder="^https?://"
+                     onChange={(e) => setPattern(e.target.value)} />
+            </Fld></Cfg>
+          )}
+
+          {ruleType === "RANGE" && (
+            <Cfg>
+              <div className="grid2">
+                <Fld label="Minimum"><input className="txt" value={minV} placeholder="0"
+                     onChange={(e) => setMinV(e.target.value)} /></Fld>
+                <Fld label="Maximum"><input className="txt" value={maxV} placeholder="100000"
+                     onChange={(e) => setMaxV(e.target.value)} /></Fld>
+              </div>
+              <label className="radio" style={{ marginTop: 10 }}>
+                <input type="checkbox" checked={flagBadNum} onChange={(e) => setFlagBadNum(e.target.checked)} />
+                Also flag values that are not numbers (default: skip them)
+              </label>
+            </Cfg>
+          )}
+
+          {ruleType === "UNIQUENESS" && (
+            <Cfg>
+              <p className="cfg-help">
+                Pick a single <b>Field</b> above, <b>or</b> tick two or more columns here to
+                check a combination — the Field selector then disappears.
+              </p>
+              <ChipPick options={columns} value={multiFields} onChange={setMultiFields} />
+            </Cfg>
+          )}
+
+          {ruleType === "REFERENTIAL_INTEGRITY" && (
+            <Cfg>
+              <p className="cfg-help">
+                The <b>Field</b> above is the column on {entityName}. Choose where it must exist —
+                the lookup entity must be in the same run.
               </p>
               <div className="grid2">
-                <Field label="Reference Entity">
-                  <select value={refEntity} onChange={(e) => setRefEntity(e.target.value)}>
+                <Fld label="Lookup Entity">
+                  <select value={lookupEntity} onChange={(e) => setLookupEntity(e.target.value)}>
                     {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
                   </select>
-                </Field>
-                <Field label="Reference Field">
-                  <select value={refField} onChange={(e) => setRefField(e.target.value)}>
-                    <option value="">Select a field…</option>
-                    {refColumns.map((c) => <option key={c}>{c}</option>)}
+                </Fld>
+                <Fld label="Lookup Field">
+                  <select value={lookupField} onChange={(e) => setLookupField(e.target.value)}>
+                    <option value="">Select…</option>
+                    {lookupChoices.map((c) => (
+                      <option key={c} value={c}>
+                        {c}{c === lookupEnt?.primary_key_field ? "  (primary key)" : ""}
+                      </option>
+                    ))}
                   </select>
-                </Field>
+                </Fld>
               </div>
-              <p className="mini dim">
-                Only has values to check against once the reference entity has been validated at least once.
-              </p>
-            </div>
+            </Cfg>
           )}
 
-          {isMulti && (
-            <div className="subpanel violet">
-              <ConditionList
-                title="If the record matches"
-                conds={conditions} setConds={setConditions}
-                logic={logic} setLogic={setLogic} columns={columns}
-              />
-              <div className="thenrow" style={{ marginTop: 12 }}>
-                <span className="lbl">THEN</span>
-                <label className="radio">
-                  <input type="radio" checked={thenType === "require"} onChange={() => setThenType("require")} />
-                  Require a field
-                </label>
-                <label className="radio">
-                  <input type="radio" checked={thenType === "flag"} onChange={() => setThenType("flag")} />
-                  Just flag the record
-                </label>
-                {thenType === "require" && (
-                  <select value={thenField} onChange={(e) => setThenField(e.target.value)} style={{ width: 190 }}>
-                    <option value="">Select a field…</option>
+          {ruleType === "AGGREGATION" && (
+            <Cfg>
+              <div className="grid2">
+                <Fld label="Function">
+                  <select value={aggFn} onChange={(e) => setAggFn(e.target.value)}>
+                    {AGG_FUNCS.map((f) => <option key={f}>{f}</option>)}
+                  </select>
+                </Fld>
+                <Fld label="Measure field">
+                  <select value={aggField} onChange={(e) => setAggField(e.target.value)}>
+                    <option value="*">* (row count)</option>
                     {columns.map((c) => <option key={c}>{c}</option>)}
                   </select>
-                )}
+                </Fld>
               </div>
-            </div>
+              <div style={{ marginTop: 16 }}>
+                <p className="cfg-help">Group the rows by one or more columns.</p>
+                <ChipPick options={columns} value={groupBy} onChange={setGroupBy} />
+              </div>
+              <div className="grid2" style={{ marginTop: 12 }}>
+                <Fld label="Operator">
+                  <select value={aggOp} onChange={(e) => setAggOp(e.target.value)}>
+                    {OPS.map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </Fld>
+                <Fld label="Threshold">
+                  <input className="txt" value={threshold} placeholder="3"
+                         onChange={(e) => setThreshold(e.target.value)} />
+                </Fld>
+              </div>
+            </Cfg>
           )}
 
-          {/* Optional scope filter -- available on EVERY rule type, including
-              Required and Unique, which previously had no configuration. */}
-          <div className="subpanel plain">
-            <label className="radio" style={{ fontWeight: 700 }}>
-              <input type="checkbox" checked={useFilter} onChange={(e) => setUseFilter(e.target.checked)} />
-              Only check some records (optional scope filter)
-            </label>
-            {useFilter && (
-              <div style={{ marginTop: 12 }}>
-                <ConditionList
-                  title="Only where"
-                  conds={filterConds} setConds={setFilterConds}
-                  logic={filterLogic} setLogic={setFilterLogic} columns={columns}
-                />
-              </div>
-            )}
+          {ruleType === "ALLOWED_VALUES" && (
+            <Cfg><Fld label="Allowed values (comma separated)">
+              <input className="txt" value={allowed} placeholder="US, IN, CA, UK"
+                     onChange={(e) => setAllowed(e.target.value)} />
+            </Fld></Cfg>
+          )}
+
+          {(ruleType === "CROSS_FIELD_SIMPLE" || ruleType === "CUSTOM_SQL") && (
+            <Cfg>
+              <Fld label="Expression (this entity's columns only)">
+                <input className="txt" value={expression}
+                       placeholder="BillingCountry='USA' AND BillingState IS NULL"
+                       onChange={(e) => setExpression(e.target.value)} />
+              </Fld>
+              <p className="cfg-note">
+                Available columns: {columns.slice(0, 8).join(", ")}{columns.length > 8 ? "…" : ""}
+              </p>
+            </Cfg>
+          )}
+
+          <div className="grid2" style={{ marginTop: 14 }}>
+            <Fld label="Rule name (optional)">
+              <input className="txt" value={ruleName} placeholder="auto-generated if blank"
+                     onChange={(e) => setRuleName(e.target.value)} />
+            </Fld>
+            <Fld label="Error message (optional)">
+              <input className="txt" value={errMsg} placeholder="shown on each violation"
+                     onChange={(e) => setErrMsg(e.target.value)} />
+            </Fld>
           </div>
 
           <div className="form-actions">
-            <button onClick={createRule} className="btn-primary">Save Draft</button>
+            <button onClick={create} className="btn-primary">
+              {editing ? "Save Changes" : "Save Draft"}
+            </button>
+
           </div>
         </section>
 
         {guide && (
           <section className="card guide-card" style={{ marginBottom: 16 }}>
             <div className="guide-head">
-              <span className="guide-tag">{labelFor(ruleType)}</span>
+              <span className="guide-tag">{ruleType.replace(/_/g, " ")}</span>
               <h2 style={{ margin: 0 }}>How this rule type works</h2>
             </div>
             <p className="guide-plain">{guide.plain}</p>
@@ -342,135 +428,200 @@ export default function RulesPage() {
             <h2>All Rules</h2>
             <span className="count">{shown.length} of {rules.length}</span>
             <span className="spacer" />
-            <select className="sm" value={filterEntity} onChange={(e) => setFilterEntity(e.target.value)}>
+            <select className="sm" value={fEntity} onChange={(e) => setFEntity(e.target.value)}>
               <option value="">All objects</option>
               {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
             </select>
-            <select className="sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-              <option value="">All statuses</option>
-              <option value="draft">Draft</option>
-              <option value="submitted">Submitted</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
+            <select className="sm" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+              <option value="">All status</option>
+              {STATUSES.map((s) => <option key={s}>{s}</option>)}
             </select>
           </div>
           <table className="cde">
             <thead>
               <tr>
-                <th>Rule ID</th><th>Entity</th><th>Field</th><th>Type</th>
-                <th>Exec</th><th>Severity</th><th>Status</th><th>Actions</th>
+                <th>ID</th><th>Rule Name</th><th>Entity</th><th>Field</th>
+                <th>Type</th><th>Severity</th><th>Status</th><th className="th-acts" />
               </tr>
             </thead>
             <tbody>
               {shown.map((r) => (
-                <tr key={r.rule_id}>
+                <tr key={r.rule_id} className="clickable"
+                    onClick={(e) => {
+                      // let the ⋮ menu handle its own clicks
+                      if ((e.target as HTMLElement).closest(".kebab-wrap")) return;
+                      setDetail(r);
+                    }}>
                   <td className="el mono">{r.rule_id}</td>
+                  <td className="rname">{r.rule_name}</td>
                   <td>{r.entity_name}</td>
-                  <td>{r.field_name}</td>
-                  <td>{labelFor(r.rule_type)}</td>
-                  <td><span className={`badge ${r.execution_type === "RECORD" ? "b-violet" : "b-acc"}`}>{r.execution_type}</span></td>
-                  <td><span className={`badge ${r.severity === "Critical" ? "b-crit" : "b-warn"}`}>{r.severity}</span></td>
-                  <td>
-                    <span className={`badge ${statusBadge(r.status)}`}>{r.status}</span>
-                    {r.approved_by && <div className="mini dim">by {r.approved_by}</div>}
+                  <td>{r.field_name || <span className="tag-multi">multi-field</span>}</td>
+                  <td className="mini">{r.rule_type.replace(/_/g, " ")}</td>
+                  <td><span className={`badge ${sevBadge(r.severity)}`}>{r.severity}</span></td>
+                  <td><span className={`badge ${statusBadge(r.status)}`}>{r.status}</span></td>
+                  <td className="acts-end">
+                    <div className="kebab-wrap">
+                      <button className="kebab" title="Actions"
+                              onClick={() => setMenuFor(menuFor === r.rule_id ? null : r.rule_id)}>⋮</button>
+                      {menuFor === r.rule_id && (
+                        <>
+                          <div className="menu-scrim" onClick={() => setMenuFor(null)} />
+                          <div className="menu">
+                            <button onClick={() => { setDetail(r); setMenuFor(null); }}>View details</button>
+                            <button onClick={() => loadForEdit(r)}>Edit</button>
+                            {(r.status === "DRAFT" || r.status === "UPDATED" || r.status === "REJECTED") && (
+                              <button onClick={() => act(r.rule_id, "submit")}>Submit for approval</button>
+                            )}
+                            {r.status === "PENDING" && isAdmin && (
+                              <>
+                                <button className="ok" onClick={() => act(r.rule_id, "approve")}>Approve</button>
+                                <button className="no" onClick={() => act(r.rule_id, "reject")}>Reject</button>
+                              </>
+                            )}
+                            {r.status === "PENDING" && !isAdmin && (
+                              <span className="menu-note">Approval needs the admin role</span>
+                            )}
+                            {r.status === "APPROVED" && isAdmin && (
+                              <button className="no" onClick={() => act(r.rule_id, "retire")}>Retire</button>
+                            )}
+                            {r.status === "RETIRED" && isAdmin && (
+                              <button className="ok" onClick={() => act(r.rule_id, "reactivate")}>Reactivate</button>
+                            )}
+                            {(r.status === "APPROVED" || r.status === "RETIRED") && !isAdmin && (
+                              <span className="menu-note">Retire / reactivate needs admin</span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </td>
-                  <td className="acts"><div className="btns">
-                    {r.status === "draft" && <button className="btn-mini" onClick={() => transition(r.rule_id, "submit")}>Submit</button>}
-                    {r.status === "submitted" && (isAdmin ? (
-                      <>
-                        <button className="btn-mini ok" onClick={() => transition(r.rule_id, "approve")}>Approve</button>
-                        <button className="btn-mini no" onClick={() => transition(r.rule_id, "reject")}>Reject</button>
-                      </>
-                    ) : (
-                      <span className="mini dim">admin only</span>
-                    ))}
-                    {r.status === "rejected" && <button className="btn-mini" onClick={() => transition(r.rule_id, "submit")}>Resubmit</button>}
-                  </div></td>
                 </tr>
               ))}
-              {shown.length === 0 && (
-                <tr><td colSpan={8} className="mini">No rules yet — create one above.</td></tr>
-              )}
+              {shown.length === 0 && <tr><td colSpan={8} className="mini">No rules yet — create one above.</td></tr>}
             </tbody>
           </table>
-          <p className="mini dim" style={{ marginTop: 10 }}>
-            Only <b>approved</b> rules are executed. Approving needs the <b>admin</b> role.
-            Separation of duties (an author may not approve their own rule) is off in
-            development — set <code>REQUIRE_SEPARATE_APPROVER=true</code> on the server to
-            enforce it in production.
-          </p>
+          <ul className="legend-notes">
+            <li>Click a rule to see its full definition.</li>
+            <li>Use <b>⋮</b> for actions.</li>
+            <li>Only <b>admins</b> can approve or retire.</li>
+          </ul>
         </section>
+
+        {detail && <RuleModal rule={detail} onClose={() => setDetail(null)} />}
       </div>
     </>
   );
 }
 
-function ConditionList({ title, conds, setConds, logic, setLogic, columns }: any) {
+/**
+ * Full rule detail. A single row cannot show a multi-field UNIQUENESS or an
+ * AGGREGATION config, so the whole definition is rendered here -- decoded into
+ * plain language, with the raw JSON underneath for anyone who wants it.
+ */
+function RuleModal({ rule, onClose }: { rule: Rule; onClose: () => void }) {
+  let d: any = {};
+  try { d = JSON.parse(rule.rule_definition || "{}"); } catch {}
+
+  const rows: [string, any][] = [];
+  const t = rule.rule_type;
+  if (t === "VALIDITY") rows.push(["Pattern", <code key="p">{d.pattern}</code>]);
+  if (t === "RANGE") {
+    rows.push(["Allowed range", `${d.min ?? "−∞"} to ${d.max ?? "∞"}`]);
+    rows.push(["Non-numeric", d.onNonNumeric === "flag" ? "flagged as a violation" : "skipped"]);
+  }
+  if (t === "UNIQUENESS")
+    rows.push(["Unique on", (d.fields?.length ? d.fields : [rule.field_name]).join("  +  ")]);
+  if (t === "REFERENTIAL_INTEGRITY")
+    rows.push(["Must exist in", `${d.lookupTable} . ${d.lookupField}`]);
+  if (t === "AGGREGATION") {
+    rows.push(["Measure", `${d.aggregateFunction}(${d.aggregateField})`]);
+    rows.push(["Grouped by", (d.groupBy || []).join("  +  ")]);
+    rows.push(["Flags when", `${d.aggregateFunction} ${d.operator} ${d.threshold}`]);
+  }
+  if (t === "ALLOWED_VALUES") rows.push(["Allowed", (d.allowedValues || []).join(", ")]);
+  if (t === "CROSS_FIELD_SIMPLE" || t === "CUSTOM_SQL")
+    rows.push(["Expression", <code key="e">{d.expression}</code>]);
+  if (d.filter?.conditions?.length)
+    rows.push(["Only where",
+      d.filter.conditions.map((c: any) => `${c.field} ${c.operator} ${c.value ?? ""}`)
+        .join(`  ${d.filter.logic}  `)]);
+
   return (
-    <>
-      <div className="matchrow">
-        <span className="lbl">{title}</span>
-        <div className="seg">
-          <button type="button" className={logic === "AND" ? "on" : ""} onClick={() => setLogic("AND")}>
-            Match all
-          </button>
-          <button type="button" className={logic === "OR" ? "on" : ""} onClick={() => setLogic("OR")}>
-            Match any
-          </button>
-        </div>
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="rulecard" onClick={(e) => e.stopPropagation()}>
+      <div className="rc-head">
+        <span className="rc-id">#{rule.rule_id}</span>
+        <b>{rule.rule_name}</b>
+        <span className={`badge ${statusBadge(rule.status)}`}>{rule.status}</span>
+        <span className={`badge ${sevBadge(rule.severity)}`}>{rule.severity}</span>
+        <button className="rc-x" onClick={onClose} title="Close">×</button>
       </div>
-      {conds.map((c: Condition, i: number) => (
-        <div key={i} className="condrow">
-          <select value={c.field} onChange={(e) => setConds(conds.map((x: Condition, j: number) => j === i ? { ...x, field: e.target.value } : x))}>
-            <option value="">Field…</option>
-            {columns.map((col: string) => <option key={col}>{col}</option>)}
-          </select>
-          <select value={c.operator} onChange={(e) => setConds(conds.map((x: Condition, j: number) => j === i ? { ...x, operator: e.target.value } : x))}>
-            {OPERATORS.map((o) => <option key={o.code} value={o.code}>{o.label}</option>)}
-          </select>
-          {!["is_null", "is_not_null"].includes(c.operator) && (
-            <input className="txt" value={c.value} placeholder="value"
-                   onChange={(e) => setConds(conds.map((x: Condition, j: number) => j === i ? { ...x, value: e.target.value } : x))} />
-          )}
-          {conds.length > 1 && (
-            <button className="btn-mini no" onClick={() => setConds(conds.filter((_: any, j: number) => j !== i))}>×</button>
-          )}
-        </div>
-      ))}
-      <button className="btn-mini" style={{ marginTop: 8 }}
-              onClick={() => setConds([...conds, { field: "", operator: "=", value: "" }])}>
-        + Add condition
-      </button>
-    </>
+
+      <div className="rc-grid">
+        <span>Entity</span><b>{rule.entity_name}</b>
+        <span>Field</span><b>{rule.field_name || "— multi-field —"}</b>
+        <span>Type</span><b>{rule.rule_type.replace(/_/g, " ")}</b>
+        <span>Key</span><b>{rule.primary_key_field}</b>
+        {rows.map(([k, v], i) => (
+          <React.Fragment key={i}><span>{k}</span><b>{v}</b></React.Fragment>
+        ))}
+      </div>
+
+      <div className="rc-foot">
+        <div>Created by <b>{rule.created_by}</b> · {new Date(rule.created_date).toLocaleDateString()}</div>
+        {rule.approved_by && <div>Approved by <b>{rule.approved_by}</b></div>}
+        {rule.error_message && <div>Message: “{rule.error_message}”</div>}
+      </div>
+
+      <details className="rc-json">
+        <summary>Raw definition</summary>
+        <pre>{JSON.stringify(d, null, 2)}</pre>
+      </details>
+      </div>
+    </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: any }) {
+function Fld({ label, children }: any) {
   return <div className="fld"><label>{label}</label>{children}</div>;
 }
-
-function labelFor(code: string) {
-  return ({
-    required: "Required", allowed_values: "Allowed Values", format_pattern: "Format Pattern",
-    max_length: "Max Length", unique: "Unique", conditional_required: "Conditional Required",
-    ref_integrity: "Referential Integrity", multi_condition: "Multi-Condition (Advanced)",
-  } as Record<string, string>)[code] || code;
+function Cfg({ children }: any) {
+  return <div className="subpanel plain">{children}</div>;
 }
 
-function configLabel(rt: string) {
-  return ({
-    allowed_values: "Allowed Values (comma separated)", format_pattern: "Pattern (regex)",
-    max_length: "Max Length", conditional_required: "If Field : If Value",
-  } as Record<string, string>)[rt] || "Configuration";
+/** Multi-select as toggle chips -- used for UNIQUENESS fields and AGGREGATION groupBy. */
+function ChipPick({ options, value, onChange }: any) {
+  const allOn = value.length === options.length && options.length > 0;
+  return (
+    <>
+    <div className="chip-bar">
+      <button type="button" className="chip-link"
+              onClick={() => onChange(allOn ? [] : [...options])}>
+        {allOn ? "Clear all" : "Select all"}
+      </button>
+      <span className="chip-count">{value.length} selected</span>
+    </div>
+    <div className="chips">
+      {options.map((c: string) => {
+        const on = value.includes(c);
+        return (
+          <button key={c} type="button" className={on ? "chip on" : "chip"}
+                  onClick={() => onChange(on ? value.filter((v: string) => v !== c) : [...value, c])}>
+            {c}
+          </button>
+        );
+      })}
+    </div>
+    </>
+  );
 }
 
-function configPlaceholder(rt: string) {
-  return ({
-    allowed_values: "USA, India, UK", format_pattern: "^https?://",
-    max_length: "20", conditional_required: "Type:Owner/Operator",
-  } as Record<string, string>)[rt] || "";
+function sevBadge(s: string) {
+  return ({ CRITICAL: "b-crit", ERROR: "b-crit", WARNING: "b-warn", INFO: "b-acc" } as any)[s] || "b-acc";
 }
-
 function statusBadge(s: string) {
-  return ({ approved: "b-good", submitted: "b-warn", rejected: "b-crit", draft: "b-acc" } as Record<string, string>)[s] || "b-acc";
+  return ({
+    APPROVED: "b-good", PENDING: "b-warn", DRAFT: "b-acc",
+    UPDATED: "b-violet", RETIRED: "b-crit",
+  } as any)[s] || "b-acc";
 }

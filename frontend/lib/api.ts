@@ -25,6 +25,19 @@ async function post<T>(path: string, body: any): Promise<T> {
   return res.json();
 }
 
+async function put<T>(path: string, body: any): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail.detail || `${path} -> ${res.status}`);
+  }
+  return res.json();
+}
+
 export { API_BASE };
 
 /* ----------------------------------------------------------------- catalog */
@@ -187,6 +200,9 @@ export interface BatchOption {
 
 export interface SourceCheck { ok: boolean; detail: string }
 
+export const SEVERITIES = ["INFO", "WARNING", "ERROR", "CRITICAL"];
+export const STATUSES = ["DRAFT", "PENDING", "APPROVED", "REJECTED", "UPDATED", "RETIRED"];
+
 export const api = {
   /** One round trip for the whole overview page. */
   summary: (batchId?: number | null) =>
@@ -205,6 +221,12 @@ export const api = {
   transitionRule: (ruleId: number, action: "submit" | "approve" | "reject", actor: string) =>
     post<Rule>(`/api/rules/${ruleId}/${action}`, { actor, role: getRole() }),
   ruleSql: (ruleId: number) => get<any>(`/api/rules/${ruleId}/sql`),
+  updateRule: (ruleId: number, body: any) =>
+    put<Rule>(`/api/rules/${ruleId}`, { ...body, role: getRole() }),
+  retireRule: (ruleId: number, actor: string) =>
+    post<Rule>(`/api/rules/${ruleId}/retire`, { actor, role: getRole() }),
+  reactivateRule: (ruleId: number, actor: string) =>
+    post<Rule>(`/api/rules/${ruleId}/reactivate`, { actor, role: getRole() }),
 
   batches: () => get<Batch[]>("/api/runs/batches"),
   batch: (batchId: number) => get<Batch>(`/api/runs/batches/${batchId}`),

@@ -21,16 +21,24 @@ from app.database import engine
 from app.models import Base, ENTITIES, ValRuleType, ValSeverity, ValStatus, staging_table_name
 from app.rule_compiler import RULE_TYPE_DESCRIPTIONS, RULE_TYPE_META, RULE_TYPES
 
+# Matches the reference workbook (Sheet3)
 SEVERITIES = [
-    ("Critical", "Must be fixed -- blocks downstream use"),
-    ("Warning", "Should be fixed -- does not block"),
+    ("INFO",     "Informational only"),
+    ("WARNING",  "Should be fixed -- does not block"),
+    ("ERROR",    "Data is wrong and needs correcting"),
+    ("CRITICAL", "Must be fixed -- blocks downstream use"),
 ]
 
+# DRAFT -> PENDING -> APPROVED. An approved rule that is edited goes to
+# UPDATED (it must be re-approved). RETIRED is the end state and is what
+# active=False means -- the rule no longer runs, but its history is kept.
 STATUSES = [
-    ("draft", "Being authored; not submitted"),
-    ("submitted", "Awaiting approval"),
-    ("approved", "Approved -- WILL be executed by the engine"),
-    ("rejected", "Rejected by an approver"),
+    ("DRAFT",    "Being authored; not yet submitted"),
+    ("PENDING",  "Submitted, awaiting approval"),
+    ("APPROVED", "Approved -- WILL be executed by the engine"),
+    ("REJECTED", "An approver refused it; edit and resubmit"),
+    ("UPDATED",  "Edited after approval; needs re-approval before it runs again"),
+    ("RETIRED",  "Switched off (active = false); no longer runs"),
 ]
 
 

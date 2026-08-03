@@ -87,6 +87,22 @@ ENTITIES: dict = {
         "primary_key_field": "Id",
         "columns": ["AccountId", "UserId", "TeamMemberRole", "AccountAccessLevel"],
     },
+    # Numeric entity from the reference workbook -- R004 (RANGE on ORDER_AMOUNT)
+    # and R008 (AGGREGATION: orders per customer) both operate on this.
+    "Orders": {
+        "source_system": "HYBRIS",
+        "source_object_name": "ORDERS",
+        "primary_key_field": "CODE",
+        "columns": ["CUSTOMER_ID", "ORDER_AMOUNT", "ORDER_DATE", "STATUS",
+                    "PART_NUMBER", "CURRENCY"],
+    },
+    # Lookup/master entity for R007 (REFERENTIAL_INTEGRITY)
+    "Part Master": {
+        "source_system": "HYBRIS",
+        "source_object_name": "PART_MASTER",
+        "primary_key_field": "PART_NUMBER",
+        "columns": ["PART_NAME", "CATEGORY", "ACTIVE_FLAG"],
+    },
 }
 
 # Convenience view: {entity_name: [column, ...]}

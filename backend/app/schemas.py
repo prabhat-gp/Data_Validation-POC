@@ -31,7 +31,7 @@ class RuleCreate(BaseModel):
     field_name: str
     rule_name: Optional[str] = None
     rule_type: str
-    severity: str = "Warning"
+    severity: str = "WARNING"
     rule_definition: dict = {}      # what the form collected -- source of truth
     error_message: Optional[str] = None
     created_by: Optional[str] = None

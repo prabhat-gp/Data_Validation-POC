@@ -21,6 +21,12 @@ from ..models import ENTITIES, ValBatch, ValMetric, ValRun
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
+# Severity codes come from the reference workbook: INFO / WARNING / ERROR /
+# CRITICAL. ERROR and CRITICAL both mean "this must be fixed", so the
+# dashboard's blocking counts cover both.
+BLOCKING = {"CRITICAL", "ERROR"}
+NON_BLOCKING = {"WARNING", "INFO"}
+
 
 def _latest_completed_run(db: Session, entity_name: Optional[str] = None) -> Optional[ValRun]:
     q = db.query(ValRun).filter(ValRun.status == "completed")
@@ -74,7 +80,7 @@ def kpis(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     checked = sum(m.records_checked for m in all_metrics)
     failed = sum(m.records_failed for m in all_metrics)
     overall = round((checked - failed) / checked * 100, 1) if checked else None
-    critical_failed = sum(m.records_failed for m in all_metrics if m.severity == "Critical")
+    critical_failed = sum(m.records_failed for m in all_metrics if m.severity in BLOCKING)
 
     # Rule coverage: distinct fields with a metric, over the entity's declared CDEs
     total_fields, covered_fields = 0, 0
@@ -168,7 +174,7 @@ def trend(limit: int = 10, db: Session = Depends(get_db)):
         for m in metrics_by_run.get(run.run_id, []):
             b["checked"] += m.records_checked
             b["failed"] += m.records_failed
-            if m.severity == "Critical":
+            if m.severity in BLOCKING:
                 b["critical_failed"] += m.records_failed
 
     out = []
@@ -191,12 +197,14 @@ def fix_profile(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     counts = {}
     for m in all_metrics:
         counts[m.severity] = counts.get(m.severity, 0) + m.records_failed
-    total = sum(counts.values()) or 1
+    blocking = sum(v for k, v in counts.items() if k in BLOCKING)
+    non_blocking = sum(v for k, v in counts.items() if k in NON_BLOCKING)
+    total = (blocking + non_blocking) or 1
     return {
-        "critical_pct": round(counts.get("Critical", 0) / total * 100, 1),
-        "warning_pct": round(counts.get("Warning", 0) / total * 100, 1),
-        "critical_count": counts.get("Critical", 0),
-        "warning_count": counts.get("Warning", 0),
+        "critical_pct": round(blocking / total * 100, 1),
+        "warning_pct": round(non_blocking / total * 100, 1),
+        "critical_count": blocking,
+        "warning_count": non_blocking,
     }
 
 
@@ -205,7 +213,7 @@ def critical_by_dimension(batch_id: Optional[int] = None, db: Session = Depends(
     by_dim = {}
     for s in _current_state(db, batch_id):
         for m in s["metrics"]:
-            if m.severity == "Critical":
+            if m.severity in BLOCKING:
                 by_dim[m.dimension] = by_dim.get(m.dimension, 0) + m.records_failed
     total = sum(by_dim.values()) or 1
     return {

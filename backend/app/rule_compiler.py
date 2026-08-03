@@ -1,38 +1,30 @@
 """
 rule_compiler.py
 ----------------
-Turns a rule's (rule_type, rule_definition) into SQL. This is the "rules as
-data, not code" boundary: adding a rule NEVER requires a code change -- it
-requires picking one of the rule types below and filling in its config.
+Turns (rule_type, rule_definition) into ONE complete SQL statement.
 
-The compiled SQL is NOT persisted. It is regenerated from rule_definition on
-every run, so the stored config and the executed SQL can never drift apart.
+EVERY rule type is QUERY-centric. There is no record-centric execution path
+and no Python loop over data rows -- that is what the reference workbook
+specifies (execution_type = QUERY on all 10 sample rules) and it is what the
+engine does. Uniqueness is query-centric too: GROUP BY / HAVING inside a
+subquery that the main query joins back to.
 
-EXECUTION MODE -- derived here, never taken from user input:
-  "predicate" (7 of 8 types) -- produces a WHERE fragment matching FAILING
-      rows. The engine runs ONE query per rule:
-          SELECT record_key, {field} FROM {staging}
-          WHERE run_id = :run_id AND ({condition})
-      pushed down to the database. No Python loop over data rows.
+Every compiled rule returns rows shaped:  (record_key, current_value)
 
-  "duplicate" (Unique only) -- still ordinary SQL (GROUP BY / HAVING), not a
-      special "record-centric" engine. Needs two passes because you cannot
-      tell whether a value is duplicated by looking at one row.
+The SQL is NOT persisted. It is regenerated from rule_definition on every run
+so the two can never drift apart.
 
-OPTIONAL FILTER -- any rule type may carry a "filter" in its definition to
-scope it to a subset of records, e.g. only check Name is present for
-Owner/Operator accounts. Empty/absent filter == the whole table.
-
-SECURITY: SQL does not allow parameterized identifiers, so every column name
-is validated against a strict identifier pattern before being spliced into
-SQL text. Rule VALUES (allowed values, lengths, patterns, filter values) are
-ALWAYS passed as bound parameters, never string-formatted into the query.
+SECURITY: SQL has no parameter binding for identifiers, so every column and
+table name is validated against a strict pattern AND (where the entity is
+known) against that entity's declared column list. All VALUES are bound
+parameters. Free-text expression rules (CROSS_FIELD_SIMPLE, CUSTOM_SQL) run
+through a token whitelist -- see _assert_safe_expression.
 """
 
 import json
 import re
 from dataclasses import dataclass, field as dc_field
-from typing import Any, Optional
+from typing import Optional
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -43,239 +35,406 @@ class RuleCompileError(ValueError):
 
 def assert_safe_identifier(name: str) -> str:
     if not _IDENTIFIER_RE.match(name or ""):
-        raise RuleCompileError(f"Unsafe/invalid column identifier: {name!r}")
+        raise RuleCompileError(f"Unsafe/invalid identifier: {name!r}")
     return name
 
 
 @dataclass
 class CompiledRule:
-    mode: str                 # "predicate" | "duplicate"
-    condition_sql: str        # WHERE-fragment (predicate) / column name (duplicate)
-    params: dict
-    # Optional scope filter, applied IN ADDITION to condition_sql. Kept
-    # separate because the duplicate path must apply it to BOTH of its passes.
-    filter_sql: Optional[str] = None
-    filter_params: dict = dc_field(default_factory=dict)
+    """A complete SELECT returning (record_key, current_value)."""
+    sql: str
+    params: dict = dc_field(default_factory=dict)
+    # True when a violation represents a GROUP rather than a single record
+    # (AGGREGATION) -- scored against group count, not record count.
+    group_level: bool = False
+    # Optional COUNT(*) query giving the correct denominator for group rules.
+    denominator_sql: Optional[str] = None
 
 
-# ---- optional scope filter ---------------------------------------------------
+# ---------------------------------------------------------------------------
+# free-text expression safety (CROSS_FIELD_SIMPLE / CUSTOM_SQL)
+# ---------------------------------------------------------------------------
+_EXPR_ALLOWED_WORDS = {
+    "AND", "OR", "NOT", "IS", "NULL", "IN", "LIKE", "BETWEEN", "TRIM",
+    "UPPER", "LOWER", "LENGTH", "COALESCE", "CAST", "AS", "REAL", "INTEGER",
+    "TEXT", "ABS", "TRUE", "FALSE",
+}
+_EXPR_BANNED = re.compile(
+    r"(;|--|/\*|\*/|\b(DROP|DELETE|INSERT|UPDATE|ALTER|CREATE|TRUNCATE|GRANT|"
+    r"REVOKE|ATTACH|DETACH|PRAGMA|UNION|SELECT|FROM|JOIN|EXEC)\b)",
+    re.IGNORECASE,
+)
+_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
-_CONDITION_OPS = {"=", "!=", "in", "is_null", "is_not_null"}
+
+def _assert_safe_expression(expr: str, allowed_columns) -> str:
+    """
+    Whitelist check for user-written SQL fragments. Rejects statement
+    terminators, comments, and any DDL/DML keyword, then requires every bare
+    identifier to be either an allowed SQL word or a real column of the entity.
+    A typo'd column is therefore rejected at save time instead of silently
+    compiling into SQL that matches nothing.
+    """
+    if not expr or not expr.strip():
+        raise RuleCompileError("expression is required")
+    if _EXPR_BANNED.search(expr):
+        raise RuleCompileError(
+            "expression contains a disallowed keyword or character "
+            "(statements, comments and DDL/DML are not permitted)"
+        )
+    # Strip quoted string literals BEFORE tokenising -- otherwise the contents
+    # of a literal like 'USA' are mistaken for a column name and rejected.
+    stripped = re.sub(r"'[^']*'", "''", expr)
+    known = {c.upper() for c in (allowed_columns or [])}
+    for tok in _TOKEN_RE.findall(stripped):
+        up = tok.upper()
+        if up in _EXPR_ALLOWED_WORDS or up in known:
+            continue
+        raise RuleCompileError(
+            f"'{tok}' is not a column of this entity (or an allowed SQL keyword)"
+        )
+    return expr
 
 
-def _compile_one_condition(cond: dict, prefix: str, idx: int) -> tuple:
+# ---------------------------------------------------------------------------
+# optional scope filter -- available on EVERY rule type
+# ---------------------------------------------------------------------------
+_CONDITION_OPS = {"=", "!=", "in", "is_null", "is_not_null", ">", "<", ">=", "<="}
+
+
+def _one_condition(cond: dict, prefix: str, idx: int, alias: str = ""):
     col = assert_safe_identifier(cond.get("field", ""))
+    q = f"{alias}{col}" if alias else col
     op = cond.get("operator")
     val = cond.get("value")
     key = f"{prefix}_{idx}"
     if op not in _CONDITION_OPS:
-        raise RuleCompileError(f"unsupported operator {op!r}; use one of {sorted(_CONDITION_OPS)}")
-    if op == "=":
-        return f"{col} = :{key}", {key: val}
-    if op == "!=":
-        return f"{col} <> :{key}", {key: val}
+        raise RuleCompileError(f"unsupported operator {op!r}")
+    if op in ("=", "!=", ">", "<", ">=", "<="):
+        sql_op = "<>" if op == "!=" else op
+        return f"{q} {sql_op} :{key}", {key: val}
     if op == "is_null":
-        return f"({col} IS NULL OR TRIM({col}) = '')", {}
+        return f"({q} IS NULL OR TRIM({q}) = '')", {}
     if op == "is_not_null":
-        return f"({col} IS NOT NULL AND TRIM({col}) <> '')", {}
+        return f"({q} IS NOT NULL AND TRIM({q}) <> '')", {}
     values = val if isinstance(val, list) else [v.strip() for v in str(val).split(",") if v.strip()]
     if not values:
         raise RuleCompileError(f"'in' operator on {col} requires at least one value")
-    placeholders = ", ".join(f":{key}_{j}" for j in range(len(values)))
-    params = {f"{key}_{j}": v for j, v in enumerate(values)}
-    return f"{col} IN ({placeholders})", params
+    ph = ", ".join(f":{key}_{j}" for j in range(len(values)))
+    return f"{q} IN ({ph})", {f"{key}_{j}": v for j, v in enumerate(values)}
 
 
-def _compile_filter(config: dict) -> tuple:
-    """
-    Optional scope filter shared by every rule type:
-        {"filter": {"conditions": [...], "logic": "AND"}}
-    Returns (sql_or_None, params). Absent/empty filter -> (None, {}).
-    """
+def _compile_filter(config: dict, alias: str = ""):
+    """{"filter": {"conditions":[...], "logic":"AND"}} -> (sql|None, params)"""
     flt = config.get("filter") or {}
-    conditions = flt.get("conditions") or []
-    if not conditions:
+    conds = flt.get("conditions") or []
+    if not conds:
         return None, {}
     logic = (flt.get("logic") or "AND").upper()
     if logic not in ("AND", "OR"):
         raise RuleCompileError("filter.logic must be 'AND' or 'OR'")
-    clauses, params = [], {}
-    for i, cond in enumerate(conditions):
-        clause, p = _compile_one_condition(cond, "flt", i)
-        clauses.append(clause)
+    parts, params = [], {}
+    for i, c in enumerate(conds):
+        s, p = _one_condition(c, "flt", i, alias)
+        parts.append(s)
         params.update(p)
-    return f"({f' {logic} '.join(clauses)})", params
+    return f"({f' {logic} '.join(parts)})", params
 
 
-# ---- one compiler function per rule_type ------------------------------------
+def _and(*clauses) -> str:
+    return " AND ".join(c for c in clauses if c)
 
-def _compile_required(field: str, config: dict) -> CompiledRule:
+
+EMPTY = "''"          # SQL empty-string literal, kept out of f-strings:
+                      # Python 3.9 forbids backslashes inside f-string exprs.
+
+
+def _is_blank(col: str) -> str:
+    return "({c} IS NULL OR TRIM({c}) = {e})".format(c=col, e=EMPTY)
+
+
+def _not_blank(col: str) -> str:
+    return "{c} IS NOT NULL AND TRIM({c}) <> {e}".format(c=col, e=EMPTY)
+
+
+# ---------------------------------------------------------------------------
+# CONTEXT passed to every compiler
+# ---------------------------------------------------------------------------
+@dataclass
+class CompileContext:
+    table: str                      # this entity's staging table
+    columns: list                   # this entity's declared columns
+    lookup_table: Optional[str] = None   # referenced entity's staging table
+    lookup_run_id: Optional[int] = None  # its run in THIS batch
+    lookup_key_field: Optional[str] = None   # referenced entity's primary key
+    lookup_columns: Optional[list] = None    # its data columns
+
+
+# ---------------------------------------------------------------------------
+# one compiler per rule type -- all QUERY-centric
+# ---------------------------------------------------------------------------
+def _c_completeness(field, cfg, ctx: CompileContext) -> CompiledRule:
     col = assert_safe_identifier(field)
+    f, fp = _compile_filter(cfg)
     return CompiledRule(
-        mode="predicate",
-        condition_sql=f"({col} IS NULL OR TRIM({col}) = '')",
-        params={},
+        sql=f"SELECT record_key, {col} AS current_value FROM {ctx.table} "
+            f"WHERE {_and('run_id = :run_id', f, _is_blank(col))}",
+        params=fp,
     )
 
 
-def _compile_allowed_values(field: str, config: dict) -> CompiledRule:
+def _c_validity(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """Regex / format check."""
     col = assert_safe_identifier(field)
-    values = config.get("values") or []
-    if not values:
-        raise RuleCompileError("allowed_values rule requires a non-empty 'values' list")
-    placeholders = ", ".join(f":av_{i}" for i in range(len(values)))
-    params = {f"av_{i}": v for i, v in enumerate(values)}
-    return CompiledRule(
-        mode="predicate",
-        condition_sql=f"({col} IS NOT NULL AND TRIM({col}) <> '' AND {col} NOT IN ({placeholders}))",
-        params=params,
-    )
-
-
-def _compile_format_pattern(field: str, config: dict) -> CompiledRule:
-    col = assert_safe_identifier(field)
-    pattern = config.get("pattern")
+    pattern = cfg.get("pattern") or cfg.get("regex")
     if not pattern:
-        raise RuleCompileError("format_pattern rule requires a 'pattern' regex")
-    # REGEXP is registered as a custom SQLite function (see database.py).
-    # On Oracle/Postgres this becomes REGEXP_LIKE / operator ~ at the dialect layer.
+        raise RuleCompileError("VALIDITY requires a 'pattern'")
+    f, fp = _compile_filter(cfg)
     return CompiledRule(
-        mode="predicate",
-        condition_sql=f"({col} IS NOT NULL AND TRIM({col}) <> '' AND NOT REGEXP(:pattern, {col}))",
-        params={"pattern": pattern},
+        sql=f"SELECT record_key, {col} AS current_value FROM {ctx.table} "
+            f"WHERE {_and('run_id = :run_id', f, _not_blank(col), f'NOT REGEXP(:pattern, {col})')}",
+        params={"pattern": pattern, **fp},
     )
 
 
-def _compile_max_length(field: str, config: dict) -> CompiledRule:
+def _c_range(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """R004: ORDER_AMOUNT < 0 OR ORDER_AMOUNT > 100000"""
     col = assert_safe_identifier(field)
-    max_len = config.get("max_length")
-    if not isinstance(max_len, int) or max_len <= 0:
-        raise RuleCompileError("max_length rule requires a positive integer 'max_length'")
-    return CompiledRule(
-        mode="predicate",
-        condition_sql=f"(LENGTH({col}) > :max_len)",
-        params={"max_len": max_len},
-    )
+    lo, hi = cfg.get("min"), cfg.get("max")
+    if lo is None and hi is None:
+        raise RuleCompileError("RANGE requires 'min' and/or 'max'")
+    bounds, params = [], {}
+    if lo is not None:
+        bounds.append(f"CAST({col} AS REAL) < :rmin"); params["rmin"] = lo
+    if hi is not None:
+        bounds.append(f"CAST({col} AS REAL) > :rmax"); params["rmax"] = hi
 
-
-def _compile_unique(field: str, config: dict) -> CompiledRule:
-    """
-    Duplicate check -- plain SQL GROUP BY/HAVING, run through the same engine
-    path as everything else. condition_sql is just the column name; the two
-    passes are built in validation_engine.py.
-    """
-    col = assert_safe_identifier(field)
-    return CompiledRule(mode="duplicate", condition_sql=col, params={})
-
-
-def _compile_conditional_required(field: str, config: dict) -> CompiledRule:
-    then_col = assert_safe_identifier(field)
-    if_field = assert_safe_identifier(config.get("if_field", ""))
-    if_value = config.get("if_value")
-    if if_value is None:
-        raise RuleCompileError("conditional_required requires 'if_field' and 'if_value'")
-    return CompiledRule(
-        mode="predicate",
-        condition_sql=f"({if_field} = :if_value AND ({then_col} IS NULL OR TRIM({then_col}) = ''))",
-        params={"if_value": if_value},
-    )
-
-
-def _compile_ref_integrity(field: str, config: dict) -> CompiledRule:
-    """
-    Query-centric (NOT IN / LEFT JOIN pattern) -- one SQL query, no special
-    execution path. Checks this row's FK column against val_reference_values,
-    NOT against the referenced entity's live staging (which may already be
-    cleared -- see models.py).
-    """
-    col = assert_safe_identifier(field)
-    ref_entity = config.get("ref_entity_name")
-    ref_field = config.get("ref_field_name")
-    if not ref_entity or not ref_field:
-        raise RuleCompileError("ref_integrity requires 'ref_entity_name' and 'ref_field_name'")
-    return CompiledRule(
-        mode="predicate",
-        condition_sql=(
-            f"({col} IS NOT NULL AND TRIM({col}) <> '' AND {col} NOT IN ("
-            f"SELECT value FROM val_reference_values "
-            f"WHERE entity_name = :ref_entity AND field_name = :ref_field"
-            f"))"
-        ),
-        params={"ref_entity": ref_entity, "ref_field": ref_field},
-    )
-
-
-def _compile_multi_condition(field: str, config: dict) -> CompiledRule:
-    """
-    Chained, multi-field business rules. Still query-centric: every field
-    referenced belongs to the SAME row, so it compiles to one multi-clause
-    WHERE, same execution path as every other predicate rule. NOT a
-    record-loaded rules engine (Drools/BRF+ style) -- that is a different,
-    heavier thing and is deliberately not built here.
-    """
-    conditions = config.get("conditions") or []
-    logic = (config.get("logic") or "AND").upper()
-    then = config.get("then") or {}
-    if not conditions:
-        raise RuleCompileError("multi_condition requires at least one condition")
-    if logic not in ("AND", "OR"):
-        raise RuleCompileError("logic must be 'AND' or 'OR'")
-
-    clauses, params = [], {}
-    for i, cond in enumerate(conditions):
-        clause, p = _compile_one_condition(cond, "cv", i)
-        clauses.append(clause)
-        params.update(p)
-    if_expr = f" {logic} ".join(clauses)
-
-    then_type = then.get("type")
-    if then_type == "require":
-        then_col = assert_safe_identifier(then.get("field", ""))
-        condition_sql = f"(({if_expr}) AND ({then_col} IS NULL OR TRIM({then_col}) = ''))"
-    elif then_type == "flag":
-        condition_sql = f"({if_expr})"
+    # CAST('L7E 1J9' AS REAL) silently returns 0.0 in SQLite, which would be
+    # reported as "below minimum" rather than "not a number". Guard on an
+    # actual numeric pattern so a range rule only judges numbers.
+    #   onNonNumeric = "skip" (default) -> ignore; it is a VALIDITY problem
+    #   onNonNumeric = "flag"           -> report it as a range violation
+    numeric = "REGEXP(:num_re, TRIM({c}))".format(c=col)
+    params["num_re"] = r"^-?[0-9]+(\.[0-9]+)?$"
+    on_bad = str(cfg.get("onNonNumeric") or "skip").lower()
+    if on_bad == "flag":
+        cond = "((" + numeric + " AND (" + " OR ".join(bounds) + ")) OR NOT " + numeric + ")"
     else:
-        raise RuleCompileError("then.type must be 'require' or 'flag'")
+        cond = "(" + numeric + " AND (" + " OR ".join(bounds) + "))"
 
-    return CompiledRule(mode="predicate", condition_sql=condition_sql, params=params)
+    f, fp = _compile_filter(cfg)
+    return CompiledRule(
+        sql=f"SELECT record_key, {col} AS current_value FROM {ctx.table} "
+            f"WHERE {_and('run_id = :run_id', f, _not_blank(col), cond)}",
+        params={**params, **fp},
+    )
+
+
+def _c_uniqueness(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """
+    Sheet 2 pattern -- ONE query, GROUP BY/HAVING in a subquery joined back so
+    BOTH sides of a duplicate are reported:
+
+        SELECT C.ID, C.EMAIL FROM CUSTOMER C
+        JOIN (SELECT EMAIL FROM CUSTOMER GROUP BY EMAIL HAVING COUNT(*)>1) D
+          ON C.EMAIL = D.EMAIL
+
+    Supports single field (field_name) or multi-field via
+    rule_definition {"fields": ["FIRST_NAME","LAST_NAME","DOB"]} (R006).
+    """
+    fields = cfg.get("fields") or ([field] if field else [])
+    fields = [assert_safe_identifier(f) for f in fields if f]
+    if not fields:
+        raise RuleCompileError("UNIQUENESS requires field_name or rule_definition.fields")
+
+    f, fp = _compile_filter(cfg)                 # applies to the inner scan
+    f_outer, _ = _compile_filter(cfg, alias="C.")  # and to the outer scan
+
+    cols = ", ".join(fields)
+    not_blank = _and(*[_not_blank(c) for c in fields])
+    inner = (
+        f"SELECT {cols} FROM {ctx.table} "
+        f"WHERE {_and('run_id = :run_id', f, not_blank)} "
+        f"GROUP BY {cols} HAVING COUNT(*) > 1"
+    )
+    on = " AND ".join(f"C.{c} = D.{c}" for c in fields)
+    shown = fields[0] if len(fields) == 1 else " || '|' || ".join(f"C.{c}" for c in fields)
+    shown_expr = f"C.{fields[0]}" if len(fields) == 1 else shown
+    return CompiledRule(
+        sql=f"SELECT C.record_key, {shown_expr} AS current_value "
+            f"FROM {ctx.table} C JOIN ({inner}) D ON {on} "
+            f"WHERE {_and('C.run_id = :run_id', f_outer)}",
+        params=fp,
+    )
+
+
+def _c_referential_integrity(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """
+    Sheet 2 pattern -- LEFT JOIN to the lookup table, keep the misses:
+
+        SELECT O.ORDER_ID, O.PART_NUMBER FROM ORDERS O
+        LEFT JOIN PART_MASTER P ON O.PART_NUMBER = P.PART_NUMBER
+        WHERE P.PART_NUMBER IS NULL
+
+    The lookup table is the referenced entity's STAGING table, which is why
+    the batch stages every entity before validating any of them.
+    """
+    col = assert_safe_identifier(field)
+    lookup_field = cfg.get("lookupField") or cfg.get("ref_field_name")
+    if not lookup_field:
+        raise RuleCompileError("REFERENTIAL_INTEGRITY requires 'lookupField'")
+    lookup_field = assert_safe_identifier(lookup_field)
+    if not ctx.lookup_table:
+        raise RuleCompileError(
+            "the referenced entity is not part of this run -- include it in the batch"
+        )
+    # A foreign key normally points at the other table's PRIMARY KEY, and
+    # staging keeps the primary key in `record_key`, not as a data column.
+    # Without this the join would reference a column that does not exist.
+    if ctx.lookup_key_field and lookup_field == ctx.lookup_key_field:
+        lookup_col = "record_key"
+    elif ctx.lookup_columns is not None and lookup_field not in ctx.lookup_columns:
+        raise RuleCompileError(
+            f"'{lookup_field}' is not a column (or the key) of the referenced entity"
+        )
+    else:
+        lookup_col = lookup_field
+    f, fp = _compile_filter(cfg, alias="O.")
+    return CompiledRule(
+        sql=f"SELECT O.record_key, O.{col} AS current_value "
+            f"FROM {ctx.table} O "
+            f"LEFT JOIN {ctx.lookup_table} P "
+            f"  ON O.{col} = P.{lookup_col} AND P.run_id = :lookup_run_id "
+            f"WHERE {_and('O.run_id = :run_id', f, _not_blank('O.' + col), f'P.{lookup_col} IS NULL')}",
+        params={"lookup_run_id": ctx.lookup_run_id, **fp},
+    )
+
+
+def _c_aggregation(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """
+    R008: COUNT(*) per CUSTOMER_ID > 3.
+    The violation is a GROUP, not a record -- record_key holds a representative
+    key and current_value carries the group + its measure.
+    """
+    fn = str(cfg.get("aggregateFunction") or "COUNT").upper()
+    if fn not in {"COUNT", "SUM", "AVG", "MIN", "MAX"}:
+        raise RuleCompileError(f"unsupported aggregateFunction {fn!r}")
+    agg_field = cfg.get("aggregateField") or "*"
+    if agg_field != "*":
+        agg_field = assert_safe_identifier(agg_field)
+        if fn != "COUNT":
+            agg_field = f"CAST({agg_field} AS REAL)"
+    group_by = [assert_safe_identifier(g) for g in (cfg.get("groupBy") or []) if g]
+    if not group_by:
+        raise RuleCompileError("AGGREGATION requires 'groupBy'")
+    op = cfg.get("operator") or ">"
+    if op not in {">", "<", ">=", "<=", "=", "!="}:
+        raise RuleCompileError(f"unsupported operator {op!r}")
+    op = "<>" if op == "!=" else op
+    threshold = cfg.get("threshold")
+    if threshold is None:
+        raise RuleCompileError("AGGREGATION requires 'threshold'")
+
+    f, fp = _compile_filter(cfg)
+    gcols = ", ".join(group_by)
+    label = " || ' | ' || ".join(group_by)
+    return CompiledRule(
+        sql=f"SELECT MIN(record_key) AS record_key, "
+            f"({label}) || ' -> {fn}=' || {fn}({agg_field}) AS current_value "
+            f"FROM {ctx.table} WHERE {_and('run_id = :run_id', f)} "
+            f"GROUP BY {gcols} HAVING {fn}({agg_field}) {op} :threshold",
+        params={"threshold": threshold, **fp},
+        group_level=True,
+        # denominator for the score: total groups, not total records. "1 bad
+        # group out of 101 records" is meaningless; "1 bad group out of 12
+        # groups" is the honest number.
+        denominator_sql=f"SELECT COUNT(*) FROM (SELECT 1 FROM {ctx.table} "
+                        f"WHERE {_and('run_id = :run_id', f)} GROUP BY {gcols})",
+    )
+
+
+def _c_allowed_values(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """Sheet 2: WHERE COUNTRY NOT IN ('US','IN','CA','UK')"""
+    col = assert_safe_identifier(field)
+    values = cfg.get("allowedValues") or cfg.get("values") or []
+    if not values:
+        raise RuleCompileError("ALLOWED_VALUES requires 'allowedValues'")
+    ph = ", ".join(f":av_{i}" for i in range(len(values)))
+    params = {f"av_{i}": v for i, v in enumerate(values)}
+    f, fp = _compile_filter(cfg)
+    return CompiledRule(
+        sql=f"SELECT record_key, {col} AS current_value FROM {ctx.table} "
+            f"WHERE {_and('run_id = :run_id', f, _not_blank(col), f'{col} NOT IN ({ph})')}",
+        params={**params, **fp},
+    )
+
+
+def _c_cross_field_simple(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """R009: {"expression": "COUNTRY='US' AND STATE IS NULL"}"""
+    col = assert_safe_identifier(field) if field else "record_key"
+    expr = _assert_safe_expression(cfg.get("expression", ""), ctx.columns)
+    f, fp = _compile_filter(cfg)
+    return CompiledRule(
+        sql=f"SELECT record_key, {col} AS current_value FROM {ctx.table} "
+            f"WHERE {_and('run_id = :run_id', f, f'({expr})')}",
+        params=fp,
+    )
+
+
+def _c_custom_sql(field, cfg, ctx: CompileContext) -> CompiledRule:
+    """
+    Escape hatch: a raw WHERE expression. Same whitelist as CROSS_FIELD_SIMPLE
+    -- no statements, no DDL/DML, only this entity's own columns. It is NOT an
+    arbitrary-SQL backdoor.
+    """
+    col = assert_safe_identifier(field) if field else "record_key"
+    expr = _assert_safe_expression(cfg.get("expression") or cfg.get("sql") or "", ctx.columns)
+    f, fp = _compile_filter(cfg)
+    return CompiledRule(
+        sql=f"SELECT record_key, {col} AS current_value FROM {ctx.table} "
+            f"WHERE {_and('run_id = :run_id', f, f'({expr})')}",
+        params=fp,
+    )
 
 
 _COMPILERS = {
-    "required": _compile_required,
-    "allowed_values": _compile_allowed_values,
-    "format_pattern": _compile_format_pattern,
-    "max_length": _compile_max_length,
-    "unique": _compile_unique,
-    "conditional_required": _compile_conditional_required,
-    "ref_integrity": _compile_ref_integrity,
-    "multi_condition": _compile_multi_condition,
+    "COMPLETENESS":          _c_completeness,
+    "VALIDITY":              _c_validity,
+    "RANGE":                 _c_range,
+    "UNIQUENESS":            _c_uniqueness,
+    "REFERENTIAL_INTEGRITY": _c_referential_integrity,
+    "AGGREGATION":           _c_aggregation,
+    "ALLOWED_VALUES":        _c_allowed_values,
+    "CROSS_FIELD_SIMPLE":    _c_cross_field_simple,
+    "CUSTOM_SQL":            _c_custom_sql,
 }
 
 RULE_TYPES = list(_COMPILERS.keys())
 
-# rule_type -> (dimension, execution_type). Both DERIVED, never user input:
-# storing execution_type as a free field would allow a 'required' rule to be
-# marked RECORD and take the wrong engine path.
+# rule_type -> (dashboard dimension, execution_type).
+# execution_type is QUERY for every type -- matching the reference workbook.
 RULE_TYPE_META = {
-    "required":             ("Completeness",  "QUERY"),
-    "allowed_values":       ("Validity",      "QUERY"),
-    "format_pattern":       ("Format",        "QUERY"),
-    "max_length":           ("Format",        "QUERY"),
-    "unique":               ("Uniqueness",    "RECORD"),
-    "conditional_required": ("Consistency",   "QUERY"),
-    "ref_integrity":        ("Ref Integrity", "QUERY"),
-    "multi_condition":      ("Consistency",   "QUERY"),
+    "COMPLETENESS":          ("Completeness",  "QUERY"),
+    "VALIDITY":              ("Validity",      "QUERY"),
+    "RANGE":                 ("Validity",      "QUERY"),
+    "UNIQUENESS":            ("Uniqueness",    "QUERY"),
+    "REFERENTIAL_INTEGRITY": ("Ref Integrity", "QUERY"),
+    "AGGREGATION":           ("Consistency",   "QUERY"),
+    "ALLOWED_VALUES":        ("Validity",      "QUERY"),
+    "CROSS_FIELD_SIMPLE":    ("Consistency",   "QUERY"),
+    "CUSTOM_SQL":            ("Consistency",   "QUERY"),
 }
 
 RULE_TYPE_DESCRIPTIONS = {
-    "required":             "Field must not be empty",
-    "allowed_values":       "Value must be one of a fixed list",
-    "format_pattern":       "Value must match a regular expression",
-    "max_length":           "Value must not exceed a character limit",
-    "unique":               "No two records may share the same value",
-    "conditional_required": "Field is mandatory only when another field has a given value",
-    "ref_integrity":        "Value must already exist in another entity's field",
-    "multi_condition":      "Several conditions on the same record, chained with AND/OR",
+    "COMPLETENESS":          "Field must not be empty",
+    "VALIDITY":              "Value must match a format / pattern",
+    "RANGE":                 "Numeric value must fall inside min/max",
+    "UNIQUENESS":            "No duplicates on one field or a combination of fields",
+    "REFERENTIAL_INTEGRITY": "Value must exist in a lookup entity (LEFT JOIN)",
+    "AGGREGATION":           "Grouped measure must satisfy a threshold",
+    "ALLOWED_VALUES":        "Value must be one of a fixed list",
+    "CROSS_FIELD_SIMPLE":    "Condition across fields of the same record",
+    "CUSTOM_SQL":            "Custom expression over this entity's columns",
 }
 
 
@@ -284,37 +443,32 @@ def dimension_for(rule_type: str) -> str:
 
 
 def execution_type_for(rule_type: str) -> str:
-    return RULE_TYPE_META.get(rule_type, ("Validity", "QUERY"))[1]
+    return "QUERY"      # every rule type is query-centric
 
 
-def fields_referenced(rule_type: str, field_name: str, rule_definition: str) -> set:
-    """
-    Every column a rule touches -- used to prune staging to only what the
-    selected rules actually need, and to fail fast when a source file is
-    missing a required column.
-    """
-    config = json.loads(rule_definition) if rule_definition else {}
-    fields = {field_name}
-    if rule_type == "conditional_required" and config.get("if_field"):
-        fields.add(config["if_field"])
-    if rule_type == "multi_condition":
-        for cond in config.get("conditions") or []:
-            if cond.get("field"):
-                fields.add(cond["field"])
-        then = config.get("then") or {}
-        if then.get("field"):
-            fields.add(then["field"])
-    for cond in (config.get("filter") or {}).get("conditions") or []:
-        if cond.get("field"):
-            fields.add(cond["field"])
-    return fields
+def referenced_entity(rule_type: str, rule_definition) -> Optional[str]:
+    """Which OTHER entity this rule needs staged (REFERENTIAL_INTEGRITY only)."""
+    if rule_type != "REFERENTIAL_INTEGRITY":
+        return None
+    cfg = json.loads(rule_definition) if isinstance(rule_definition, str) else (rule_definition or {})
+    return cfg.get("lookupTable") or cfg.get("ref_entity_name")
 
 
-def compile_rule(rule_type: str, field_name: str, rule_definition: str) -> CompiledRule:
+def fields_referenced(rule_type: str, field_name: str, rule_definition) -> set:
+    cfg = json.loads(rule_definition) if isinstance(rule_definition, str) else (rule_definition or {})
+    cfg = cfg or {}
+    out = {field_name} if field_name else set()
+    out.update(cfg.get("fields") or [])
+    out.update(cfg.get("groupBy") or [])
+    for c in (cfg.get("filter") or {}).get("conditions") or []:
+        if c.get("field"):
+            out.add(c["field"])
+    return {f for f in out if f}
+
+
+def compile_rule(rule_type: str, field_name: str, rule_definition, ctx: CompileContext) -> CompiledRule:
     fn = _COMPILERS.get(rule_type)
     if fn is None:
-        raise RuleCompileError(f"Unknown rule_type: {rule_type!r}. Supported: {RULE_TYPES}")
-    config: dict = json.loads(rule_definition) if rule_definition else {}
-    compiled = fn(field_name, config)
-    compiled.filter_sql, compiled.filter_params = _compile_filter(config)
-    return compiled
+        raise RuleCompileError(f"Unknown rule_type {rule_type!r}. Supported: {RULE_TYPES}")
+    cfg = json.loads(rule_definition) if isinstance(rule_definition, str) and rule_definition else (rule_definition or {})
+    return fn(field_name, cfg or {}, ctx)

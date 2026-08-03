@@ -9,15 +9,21 @@ import ScoreGauge from "./ScoreGauge";
 
 export default function DashboardPage() {
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
-  const [source, setSource] = useState("");
+  const [source, setSource] = useState("db_fetch");   // sensible default
   const [batchId, setBatchId] = useState<number | null>(null);
   const [batchOpts, setBatchOpts] = useState<BatchOption[]>([]);
 
   // Run ID is meaningless without a source, so it stays disabled until one is
   // picked and then only offers batches from that source.
   useEffect(() => {
-    if (!source) { setBatchOpts([]); return; }
-    api.batchOptions(source).then(setBatchOpts).catch(() => setBatchOpts([]));
+    if (!source) { setBatchOpts([]); setBatchId(null); return; }
+    api.batchOptions(source)
+      .then((opts) => {
+        setBatchOpts(opts);
+        // land on the newest run rather than making the user pick one
+        setBatchId(opts.length ? opts[0].batch_id : null);
+      })
+      .catch(() => { setBatchOpts([]); setBatchId(null); });
   }, [source]);
 
   return (
@@ -42,7 +48,7 @@ export default function DashboardPage() {
           <span className="fl">Run ID</span>
           <select value={batchId ?? ""} disabled={!source}
                   onChange={(e) => setBatchId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">{source ? "Latest per object" : "Pick a source first"}</option>
+            <option value="">Latest per object</option>
             {batchOpts.map((b) => (
               <option key={b.batch_id} value={b.batch_id}>
                 #{b.batch_id} · {b.entity_count} obj

@@ -471,3 +471,133 @@ input[type="file"] { color: var(--ink); }
 .txt::placeholder, input::placeholder { color: var(--ink-faint); }
 table.cde tbody tr:hover { background: var(--panel-2); }
 .guide-sql { color: var(--accent-ink); }
+
+/* multi-select chips (UNIQUENESS fields, AGGREGATION group-by) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft);
+  border-radius: 20px; padding: 5px 12px; font-size: 11.5px; font-weight: 650;
+  cursor: pointer; font-family: inherit;
+}
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ---------------- kebab actions menu ---------------- */
+.kebab-wrap { position: relative; display: inline-block; }
+.kebab {
+  border: 1px solid transparent; background: none; cursor: pointer;
+  font-size: 17px; line-height: 1; padding: 3px 8px; border-radius: 7px;
+  color: var(--ink-soft); font-family: inherit;
+}
+.kebab:hover { background: var(--panel-2); border-color: var(--line); color: var(--ink); }
+.menu-scrim { position: fixed; inset: 0; z-index: 40; }
+.menu {
+  position: absolute; right: 0; top: 100%; z-index: 41; min-width: 190px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: var(--shadow-lg); padding: 5px; display: flex; flex-direction: column;
+}
+.menu button {
+  text-align: left; border: none; background: none; cursor: pointer;
+  padding: 8px 11px; border-radius: 7px; font-size: 12.5px; font-weight: 600;
+  color: var(--ink); font-family: inherit;
+}
+.menu button:hover { background: var(--panel-2); }
+.menu button.ok { color: var(--good); }
+.menu button.no { color: var(--crit); }
+.menu-note { padding: 8px 11px; font-size: 11px; color: var(--ink-faint); }
+
+/* ---------------- rule detail modal (opens on row click) ---------------- */
+.modal-scrim {
+  position: fixed; inset: 0; z-index: 60; background: rgba(10,14,20,.45);
+  display: grid; place-items: center; padding: 24px;
+  animation: fadeIn .12s ease-out;
+}
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+.rulecard {
+  width: min(560px, 100%); max-height: 86vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow-lg); padding: 20px 22px;
+  animation: rcIn .16s ease-out;
+}
+@keyframes rcIn { from { opacity: 0; transform: translateY(10px) scale(.985) } to { opacity: 1; transform: none } }
+.rc-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 14px; }
+.rc-head b { font-size: 14.5px; flex: 1; min-width: 0; }
+.rc-id {
+  font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700;
+  color: var(--accent); background: var(--accent-soft); padding: 3px 8px; border-radius: 6px;
+}
+.rc-x {
+  border: none; background: none; cursor: pointer; font-size: 22px; line-height: 1;
+  color: var(--ink-faint); padding: 0 4px; font-family: inherit;
+}
+.rc-x:hover { color: var(--ink); }
+.rc-grid {
+  display: grid; grid-template-columns: 108px 1fr; gap: 9px 14px;
+  padding: 14px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);
+}
+.rc-grid > span {
+  font-size: 9.5px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--ink-faint); padding-top: 3px;
+}
+.rc-grid > b { font-size: 13px; font-weight: 650; word-break: break-word; }
+.rc-grid code {
+  font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--accent-ink);
+  background: var(--panel-2); padding: 3px 7px; border-radius: 6px;
+  display: inline-block; word-break: break-all;
+}
+.rc-foot { margin-top: 13px; font-size: 11.5px; color: var(--ink-soft); line-height: 1.8; }
+.rc-json { margin-top: 12px; }
+.rc-json summary {
+  cursor: pointer; font-size: 10.5px; font-weight: 700; color: var(--ink-faint);
+  text-transform: uppercase; letter-spacing: .05em;
+}
+.rc-json pre {
+  margin-top: 8px; font-size: 11px; background: var(--panel-2);
+  border: 1px solid var(--line-soft); border-radius: 8px; padding: 10px;
+  overflow-x: auto; color: var(--ink-soft);
+}
+
+/* rows are clickable -- say so */
+table.cde tbody tr.clickable { cursor: pointer; }
+table.cde tbody tr.clickable:hover { background: var(--panel-2); }
+
+/* "multi-field" reads as a real label, not faded micro-text */
+.tag-multi {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+  color: var(--violet); background: var(--violet-bg);
+  padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+}
+
+/* config help text needs air before the controls it describes */
+.cfg-help {
+  font-size: 12px; color: var(--ink-soft); line-height: 1.55;
+  margin: 0 0 12px;
+}
+.chip-bar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
+}
+.chip-link {
+  border: none; background: none; cursor: pointer; padding: 0;
+  font-size: 11.5px; font-weight: 700; color: var(--accent); font-family: inherit;
+}
+.chip-link:hover { text-decoration: underline; }
+.chip-count { font-size: 11px; color: var(--ink-faint); font-weight: 600; }
+
+
+
+/* help text inside a config panel always needs air before its controls */
+.cfg-note { font-size: 11.5px; color: var(--ink-faint); margin: 10px 0 0; line-height: 1.5; }
+
+/* actions cell: kebab sits at the row end, no column header needed */
+td.acts-end { text-align: right; width: 44px; }
+th[aria-label="actions"] { width: 44px; }
+
+/* rule name is the human-readable identifier -- give it weight */
+td.rname { font-weight: 650; font-size: 12.5px; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* short one-idea-per-line notes instead of a run-on sentence */
+.legend-notes { list-style: none; margin: 14px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 4px; }
+.legend-notes li { font-size: 11.5px; color: var(--ink-soft); }
+th.th-acts { width: 44px; }

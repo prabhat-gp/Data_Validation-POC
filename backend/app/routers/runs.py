@@ -30,7 +30,9 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal, get_db
 from ..models import ENTITIES, ValBatch, ValRun
 from ..schemas import BatchOut, BatchTriggerDb, RunOut
-from ..validation_engine import run_validation
+from ..validation_engine import (
+    clear_run_staging, finish_run, stage_run, validate_run,
+)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -67,24 +69,53 @@ def _batch_payload(db: Session, batch: ValBatch) -> BatchOut:
 
 def _execute_batch(batch_id: int, source_kind: str, files_by_entity: dict, rule_ids):
     """
-    Runs every entity in the batch SEQUENTIALLY, in its own DB session.
+    THREE PHASES, all strictly sequential -- nothing runs concurrently.
 
-    Sequential on purpose: four heavy jobs at once would compete for the same
-    connection pool and write throughput, and concurrent bulk loads inside the
-    API process can starve the UI. One entity failing does NOT abort the rest.
+        1. stage every entity
+        2. validate every entity
+        3. clear all staging
+
+    Phase 1 must finish before phase 2 starts because REFERENTIAL_INTEGRITY
+    LEFT JOINs the lookup entity's staging table. Staging one entity and
+    wiping it before the next made that join impossible.
+
+    A failure in phase 1 for one entity does NOT stop the others -- that
+    entity is marked failed and skipped in phase 2.
     """
     db = SessionLocal()
+    staged_runs: dict = {}
+    failed_runs: set = set()
     try:
         runs = db.query(ValRun).filter(ValRun.batch_id == batch_id).order_by(ValRun.run_id).all()
+
+        # ---- PHASE 1: stage everything -------------------------------------
         for run in runs:
             try:
-                run_validation(
-                    db, run.run_id, source_kind,
-                    file_path=files_by_entity.get(run.entity_name),
-                    rule_ids=rule_ids,
-                )
-            except Exception:  # noqa: BLE001 -- already recorded on the run row
+                stage_run(db, run.run_id, source_kind, files_by_entity.get(run.entity_name))
+                staged_runs[run.entity_name] = run.run_id
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                finish_run(db, run.run_id, str(exc))
+                failed_runs.add(run.run_id)
+
+        # ---- PHASE 2: validate everything ----------------------------------
+        for run in runs:
+            if run.run_id in failed_runs:
                 continue
+            try:
+                validate_run(db, run.run_id, staged_runs, rule_ids)
+                finish_run(db, run.run_id)
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                finish_run(db, run.run_id, str(exc))
+                failed_runs.add(run.run_id)
+
+        # ---- PHASE 3: staging is runtime-only ------------------------------
+        for run in runs:
+            try:
+                clear_run_staging(db, run.run_id)
+            except Exception:  # noqa: BLE001
+                pass
     finally:
         for path in files_by_entity.values():
             try:

@@ -24,8 +24,10 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import ENTITIES, ValRule
+from ..models import ENTITIES, ValRule  # noqa: F811
 from ..rule_compiler import (
-    RULE_TYPES, RuleCompileError, compile_rule, dimension_for, execution_type_for,
+    RULE_TYPES, CompileContext, RuleCompileError, compile_rule, dimension_for,
+    execution_type_for,
 )
 from ..schemas import RuleCreate, RuleOut, RuleTransition
 
@@ -88,7 +90,7 @@ def create_rule(payload: RuleCreate, db: Session = Depends(get_db)):
     meta = ENTITIES.get(payload.entity_name)
     if meta is None:
         raise HTTPException(400, f"Unknown entity: {payload.entity_name}")
-    if payload.field_name not in meta["columns"]:
+    if payload.field_name and payload.field_name not in meta["columns"]:
         raise HTTPException(
             400,
             f"'{payload.field_name}' is not a known column on {payload.entity_name}. "
@@ -102,8 +104,15 @@ def create_rule(payload: RuleCreate, db: Session = Depends(get_db)):
     # Compile now purely to validate the config. The SQL is deliberately NOT
     # stored -- it is regenerated at run time so it can never drift from the
     # definition. Failing here means a broken rule can't reach 'draft'.
+    # Compile now purely to validate the configuration. REFERENTIAL_INTEGRITY
+    # needs a lookup table at run time, so a placeholder is supplied here --
+    # the real one is resolved from the batch when the rule executes.
+    ctx = CompileContext(
+        table="stg_x", columns=meta["columns"],
+        lookup_table="stg_lookup", lookup_run_id=0,
+    )
     try:
-        compile_rule(payload.rule_type, payload.field_name, definition_json)
+        compile_rule(payload.rule_type, payload.field_name, definition_json, ctx)
     except RuleCompileError as exc:
         raise HTTPException(400, f"Invalid rule configuration: {exc}")
 
@@ -118,7 +127,7 @@ def create_rule(payload: RuleCreate, db: Session = Depends(get_db)):
         rule_definition=definition_json,
         error_message=payload.error_message,
         severity=payload.severity,
-        status="draft",
+        status="DRAFT",
         active=True,
         created_by=payload.created_by or "system",
         created_date=utcnow(),
@@ -140,9 +149,9 @@ def _get_rule(db: Session, rule_id: int) -> ValRule:
 def submit_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: Session = Depends(get_db)):
     require_role(payload.role, "owner")
     rule = _get_rule(db, rule_id)
-    if rule.status not in ("draft", "rejected"):
+    if rule.status not in ("DRAFT", "UPDATED", "REJECTED"):
         raise HTTPException(400, f"cannot submit a rule in status '{rule.status}'")
-    rule.status = "submitted"
+    rule.status = "PENDING"
     rule.updated_by = payload.actor or rule.created_by
     rule.updated_date = utcnow()
     db.commit()
@@ -163,8 +172,8 @@ def approve_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: S
     """
     require_role(payload.role, "admin")
     rule = _get_rule(db, rule_id)
-    if rule.status != "submitted":
-        raise HTTPException(400, f"only submitted rules can be approved (this one is '{rule.status}')")
+    if rule.status != "PENDING":
+        raise HTTPException(400, f"only PENDING rules can be approved (this one is '{rule.status}')")
 
     actor = payload.actor
     if (
@@ -178,7 +187,8 @@ def approve_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: S
             "different person (separation of duties is enabled on this environment).",
         )
 
-    rule.status = "approved"
+    rule.status = "APPROVED"
+    rule.active = True
     rule.approved_by = actor or "system"
     rule.approved_date = utcnow()
     rule.updated_by = actor or "system"
@@ -192,10 +202,86 @@ def approve_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: S
 def reject_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: Session = Depends(get_db)):
     require_role(payload.role, "admin")
     rule = _get_rule(db, rule_id)
-    if rule.status != "submitted":
-        raise HTTPException(400, f"only submitted rules can be rejected (this one is '{rule.status}')")
-    rule.status = "rejected"
+    if rule.status != "PENDING":
+        raise HTTPException(400, f"only PENDING rules can be rejected (this one is '{rule.status}')")
+    rule.status = "REJECTED"       # a real outcome -- NOT silently back to DRAFT
     rule.updated_by = payload.actor or "system"
+    rule.updated_date = utcnow()
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/{rule_id}/retire", response_model=RuleOut)
+def retire_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: Session = Depends(get_db)):
+    """
+    RETIRED == active False. The rule stops running from the next batch but its
+    history stays intact, which is why we retire instead of delete.
+    """
+    require_role(payload.role, "admin")
+    rule = _get_rule(db, rule_id)
+    rule.status = "RETIRED"
+    rule.active = False
+    rule.updated_by = payload.actor or "system"
+    rule.updated_date = utcnow()
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/{rule_id}/reactivate", response_model=RuleOut)
+def reactivate_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: Session = Depends(get_db)):
+    """A retired rule comes back as DRAFT -- it must be re-approved to run."""
+    require_role(payload.role, "admin")
+    rule = _get_rule(db, rule_id)
+    if rule.status != "RETIRED":
+        raise HTTPException(400, "only RETIRED rules can be reactivated")
+    rule.status = "DRAFT"
+    rule.active = True
+    rule.updated_by = payload.actor or "system"
+    rule.updated_date = utcnow()
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.put("/{rule_id}", response_model=RuleOut)
+def update_rule(rule_id: int, payload: RuleCreate, db: Session = Depends(get_db)):
+    """
+    Editing an APPROVED rule moves it to UPDATED, so it cannot keep running on
+    an approval that was granted for different logic. It must be resubmitted
+    and re-approved.
+    """
+    require_role(payload.role, "owner")
+    rule = _get_rule(db, rule_id)
+    if rule.status == "RETIRED":
+        raise HTTPException(400, "reactivate the rule before editing it")
+
+    meta = ENTITIES.get(payload.entity_name)
+    if meta is None:
+        raise HTTPException(400, f"Unknown entity: {payload.entity_name}")
+    definition_json = json.dumps(payload.rule_definition or {})
+    ctx = CompileContext(table="stg_x", columns=meta["columns"],
+                         lookup_table="stg_lookup", lookup_run_id=0)
+    try:
+        compile_rule(payload.rule_type, payload.field_name, definition_json, ctx)
+    except RuleCompileError as exc:
+        raise HTTPException(400, f"Invalid rule configuration: {exc}")
+
+    rule.rule_name = payload.rule_name or rule.rule_name
+    rule.entity_name = payload.entity_name
+    rule.field_name = payload.field_name
+    rule.rule_type = payload.rule_type
+    rule.severity = payload.severity
+    rule.rule_definition = definition_json
+    rule.error_message = payload.error_message
+    rule.source_system = meta["source_system"]
+    rule.primary_key_field = meta["primary_key_field"]
+    rule.execution_type = execution_type_for(payload.rule_type)
+    rule.status = "UPDATED" if rule.status == "APPROVED" else rule.status
+    rule.approved_by = None if rule.status == "UPDATED" else rule.approved_by
+    rule.approved_date = None if rule.status == "UPDATED" else rule.approved_date
+    rule.updated_by = payload.created_by or "system"
     rule.updated_date = utcnow()
     db.commit()
     db.refresh(rule)
