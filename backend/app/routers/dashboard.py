@@ -273,7 +273,8 @@ def entity_drilldown(entity_name: str, run_id: Optional[int] = None, db: Session
 
 
 @router.get("/batch-options")
-def batch_options(run_type: Optional[str] = None, db: Session = Depends(get_db)):
+def batch_options(run_type: Optional[str] = None, source_system: Optional[str] = None,
+                  db: Session = Depends(get_db)):
     """
     Batches that actually have completed runs, optionally filtered by data
     source. Feeds the dashboard's Data Source -> Run ID cascade: pick db_fetch
@@ -282,6 +283,8 @@ def batch_options(run_type: Optional[str] = None, db: Session = Depends(get_db))
     q = db.query(ValBatch)
     if run_type:
         q = q.filter(ValBatch.run_type == run_type)
+    if source_system:
+        q = q.filter(ValBatch.source_system == source_system)
     out = []
     for b in q.order_by(ValBatch.batch_id.desc()).all():
         done = db.query(ValRun).filter(
@@ -292,6 +295,7 @@ def batch_options(run_type: Optional[str] = None, db: Session = Depends(get_db))
                 "batch_id": b.batch_id,
                 "batch_name": b.batch_name or f"Run #{b.batch_id}",
                 "run_type": b.run_type,
+                "source_system": b.source_system,
                 "entity_count": done,
                 "started_at": b.started_at,
             })

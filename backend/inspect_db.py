@@ -27,7 +27,6 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smtc_dq.db")
 TABLES = [
     "val_rules", "val_rule_types", "val_severities", "val_statuses",
     "val_batches", "val_runs", "val_metrics", "val_violations",
-    "val_reference_values",
 ]
 
 

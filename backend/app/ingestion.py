@@ -23,6 +23,38 @@ string, and no user-supplied SQL is executed against the source system.
 import csv
 import os
 from typing import Optional
+from urllib.parse import quote_plus
+
+# Credentials come from a gitignored .env, not a shell command -- that keeps
+# them out of shell history and works identically on Windows and macOS
+# (`VAR=value cmd` is bash-only syntax).
+#
+# Both locations are read, repo root first, so the project's existing root
+# .env (DB_HOST / DB_USER / DB_PASSWORD / SOURCE_DB) keeps working as-is.
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(_BACKEND_DIR)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(_REPO_ROOT, ".env"))
+    load_dotenv(os.path.join(_BACKEND_DIR, ".env"), override=True)
+except ImportError:
+    pass
+
+
+def _mysql_url_from_parts():
+    """
+    Build a SQLAlchemy URL from the discrete DB_* variables this project
+    already had, so nothing needs duplicating. An explicit MYSQL_URL still
+    wins if it is set.
+    """
+    host = os.getenv("DB_HOST")
+    db = os.getenv("SOURCE_DB")
+    if not host or not db:
+        return None
+    user = os.getenv("DB_USER", "root")
+    pwd = quote_plus(os.getenv("DB_PASSWORD", ""))
+    port = os.getenv("DB_PORT", "3306")
+    return f"mysql+pymysql://{user}:{pwd}@{host}:{port}/{db}"
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -31,10 +63,26 @@ from .models import ENTITIES, staging_model, staging_table_name
 
 BATCH_SIZE = 5000
 
-# Set at deploy time (env var / Key Vault / Docker secret). Absent in dev,
-# in which case db_fetch runs fail with a clear message instead of silently
-# falling back to something unexpected.
-SOURCE_DB_URL = os.getenv("SOURCE_DB_URL")
+# One connection string PER SOURCE SYSTEM, set at deploy time. Absent ones make
+# a db_fetch fail with a clear message rather than silently falling back.
+#
+# MySQL example (the source_db holding the b2b* tables):
+#   MYSQL_URL="mysql+pymysql://user:pass@localhost:3306/source_db"
+ENV_VAR_FOR = {"MySQL": "MYSQL_URL", "SFDC": "SFDC_DB_URL", "Hybris": "HYBRIS_DB_URL"}
+
+SOURCE_URLS = {name: os.getenv(var) for name, var in ENV_VAR_FOR.items()}
+
+# Fall back to the discrete DB_* variables for MySQL.
+if not SOURCE_URLS.get("MySQL"):
+    SOURCE_URLS["MySQL"] = _mysql_url_from_parts()
+
+# Back-compat: a single SOURCE_DB_URL still works as the MySQL connection.
+if not SOURCE_URLS["MySQL"]:
+    SOURCE_URLS["MySQL"] = os.getenv("SOURCE_DB_URL")
+
+
+def source_url_for(source_system: str):
+    return SOURCE_URLS.get(source_system)
 
 
 def _bulk_insert(db: Session, entity_name: str, rows: list):
@@ -89,7 +137,8 @@ def stage_from_csv(db: Session, run_id: int, entity_name: str, file_path: str) -
     return total
 
 
-def stage_from_db(db: Session, run_id: int, entity_name: str) -> int:
+def stage_from_db(db: Session, run_id: int, entity_name: str,
+                  source_system: Optional[str] = None) -> int:
     """
     Pulls an entity straight from the configured source database.
 
@@ -100,19 +149,22 @@ def stage_from_db(db: Session, run_id: int, entity_name: str) -> int:
     """
     from sqlalchemy import create_engine
 
-    if not SOURCE_DB_URL:
+    meta = _entity_meta(entity_name)
+    source_system = source_system or meta["source_system"]
+    url = source_url_for(source_system)
+    if not url:
         raise ValueError(
-            "No source database configured. Set the SOURCE_DB_URL environment "
-            "variable on the server to enable 'Run from Database'."
+            f"No connection configured for '{source_system}'. Set "
+            f"{ENV_VAR_FOR.get(source_system, 'the connection')} in backend/.env "
+            f"to enable 'Run from Database'."
         )
 
-    meta = _entity_meta(entity_name)
     columns = meta["columns"]
     key_col = meta["primary_key_field"]
     select_cols = ", ".join([key_col] + columns)
     query = f"SELECT {select_cols} FROM {meta['source_object_name']}"
 
-    src_engine = create_engine(SOURCE_DB_URL)
+    src_engine = create_engine(url)
     total, batch = 0, []
     try:
         with src_engine.connect().execution_options(stream_results=True) as conn:

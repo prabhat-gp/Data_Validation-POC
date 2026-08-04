@@ -28,7 +28,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..models import ENTITIES, ValBatch, ValRun
+from ..models import ENTITIES, SOURCE_SYSTEMS, ValBatch, ValRun
 from ..schemas import BatchOut, BatchTriggerDb, RunOut
 from ..validation_engine import (
     clear_run_staging, finish_run, stage_run, validate_run,
@@ -148,7 +148,7 @@ async def trigger_file_batch(
         raise HTTPException(400, "the same entity cannot appear twice in one batch")
 
     batch = ValBatch(
-        batch_name=batch_name, run_type="file_upload",
+        batch_name=batch_name, run_type="file_upload", source_system="File Dump",
         triggered_by=triggered_by or "system", started_at=utcnow(),
     )
     db.add(batch)
@@ -164,7 +164,8 @@ async def trigger_file_batch(
         files_by_entity[entity] = tmp.name
         db.add(ValRun(
             batch_id=batch.batch_id, entity_name=entity, run_type="file_upload",
-            status="pending", started_at=utcnow(), source_file_name=upload.filename,
+            source_system="File Dump", status="pending", started_at=utcnow(),
+            source_file_name=upload.filename,
         ))
 
     db.commit()
@@ -199,8 +200,9 @@ def trigger_db_batch(
     if len(set(entities)) != len(entities):
         raise HTTPException(400, "the same entity cannot appear twice in one batch")
 
+    src = payload.source_system or ENTITIES[entities[0]]["source_system"]
     batch = ValBatch(
-        batch_name=payload.batch_name, run_type="db_fetch",
+        batch_name=payload.batch_name, run_type="db_fetch", source_system=src,
         triggered_by=payload.triggered_by or "system", started_at=utcnow(),
     )
     db.add(batch)
@@ -208,7 +210,7 @@ def trigger_db_batch(
     for entity in entities:
         db.add(ValRun(
             batch_id=batch.batch_id, entity_name=entity, run_type="db_fetch",
-            status="pending", started_at=utcnow(),
+            source_system=src, status="pending", started_at=utcnow(),
         ))
     db.commit()
     db.refresh(batch)
@@ -218,7 +220,7 @@ def trigger_db_batch(
 
 
 @router.get("/source/check")
-def check_source_connection():
+def check_source_connection(source_system: str = "MySQL"):
     """
     Tests the configured source database BEFORE a run is allowed.
 
@@ -227,29 +229,36 @@ def check_source_connection():
     """
     from sqlalchemy import create_engine, text as sql_text
 
-    from ..ingestion import SOURCE_DB_URL
+    from ..ingestion import ENV_VAR_FOR, source_url_for
 
-    if not SOURCE_DB_URL:
-        return {
-            "ok": False,
-            "detail": "No source database configured. Set SOURCE_DB_URL on the server.",
-        }
+    url = source_url_for(source_system)
+    if not url:
+        var = ENV_VAR_FOR.get(source_system, "the connection")
+        return {"ok": False,
+                "detail": f"Not configured. Set {var} in backend/.env"}
     try:
-        eng = create_engine(SOURCE_DB_URL)
+        eng = create_engine(url)
         with eng.connect() as conn:
             conn.execute(sql_text("SELECT 1"))
         eng.dispose()
         # never echo the URL back -- it contains credentials
-        return {"ok": True, "detail": "Connection successful."}
+        tables = ", ".join(sorted(
+            m["source_object_name"] for m in ENTITIES.values()
+            if m["source_system"] == source_system))
+        return {"ok": True,
+                "detail": f"Connected to {source_system}" + (f" · {tables}" if tables else "")}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "detail": f"Connection failed: {str(exc)[:200]}"}
 
 
 @router.get("/batches", response_model=list)
-def list_batches(limit: int = 50, run_type: Optional[str] = None, db: Session = Depends(get_db)):
+def list_batches(limit: int = 50, run_type: Optional[str] = None,
+                 source_system: Optional[str] = None, db: Session = Depends(get_db)):
     q = db.query(ValBatch)
     if run_type:
         q = q.filter(ValBatch.run_type == run_type)
+    if source_system:
+        q = q.filter(ValBatch.source_system == source_system)
     batches = q.order_by(ValBatch.batch_id.desc()).limit(limit).all()
     return [_batch_payload(db, b) for b in batches]
 

@@ -194,11 +194,14 @@ export interface BatchOption {
   batch_id: number;
   batch_name: string;
   run_type: string;
+  source_system: string | null;
   entity_count: number;
   started_at: string;
 }
 
 export interface SourceCheck { ok: boolean; detail: string }
+
+export const SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"];
 
 export const SEVERITIES = ["INFO", "WARNING", "ERROR", "CRITICAL"];
 export const STATUSES = ["DRAFT", "PENDING", "APPROVED", "REJECTED", "UPDATED", "RETIRED"];
@@ -207,9 +210,10 @@ export const api = {
   /** One round trip for the whole overview page. */
   summary: (batchId?: number | null) =>
     get<DashboardSummary>(`/api/dashboard/summary${batchId ? `?batch_id=${batchId}` : ""}`),
-  batchOptions: (runType?: string) =>
-    get<BatchOption[]>(`/api/dashboard/batch-options${runType ? `?run_type=${runType}` : ""}`),
-  checkSource: () => get<SourceCheck>("/api/runs/source/check"),
+  batchOptions: (sourceSystem?: string) =>
+    get<BatchOption[]>(`/api/dashboard/batch-options${sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : ""}`),
+  checkSource: (sourceSystem: string) =>
+    get<SourceCheck>(`/api/runs/source/check?source_system=${encodeURIComponent(sourceSystem)}`),
   drilldown: (entityName: string) =>
     get<Drilldown>(`/api/dashboard/object/${encodeURIComponent(entityName)}/drilldown`),
 

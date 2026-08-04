@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import get_config_db as get_db
 from ..models import ENTITIES, ValRule
 from ..rule_compiler import RULE_TYPE_DESCRIPTIONS, RULE_TYPE_META, RULE_TYPES
 from ..schemas import EntityOut, RuleTypeOut

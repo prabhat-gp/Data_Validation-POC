@@ -23,7 +23,7 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
-from app.database import engine
+from app.database import results_engine as engine
 from app.models import ValBatch, ValMetric, ValRun, ValViolation, utcnow
 
 # Every field below is a REAL column from the ENTITIES catalog in models.py.
@@ -78,9 +78,10 @@ DEMO = {
 # (run_type, failure multiplier) -- quality improves over the three runs
 BATCHES = [
     ("db_fetch",    1.85),
-    ("file_upload", 1.35),
+    ("db_fetch",    1.35),
     ("db_fetch",    1.00),
 ]
+DEMO_SOURCE = "Hybris"     # the seeded dashboard data represents Hybris
 
 
 def reset(db: Session):
@@ -98,7 +99,7 @@ def seed(db: Session):
     for i, (run_type, multiplier) in enumerate(BATCHES, start=1):
         batch = ValBatch(
             batch_name=f"Run #{i}",
-            run_type=run_type,
+            run_type=run_type, source_system=DEMO_SOURCE,
             triggered_by="demo_seed",
             started_at=base + timedelta(hours=i * 6),
         )
@@ -109,7 +110,7 @@ def seed(db: Session):
             run = ValRun(
                 batch_id=batch.batch_id,
                 entity_name=entity,
-                run_type=run_type,
+                run_type=run_type, source_system=DEMO_SOURCE,
                 status="completed",
                 started_at=base + timedelta(hours=i * 6),
                 finished_at=base + timedelta(hours=i * 6, minutes=8),

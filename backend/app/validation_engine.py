@@ -29,6 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from . import ingestion
+from .database import ConfigSession
 from .models import ENTITIES, ValMetric, ValRule, ValRun, ValViolation, staging_table_name
 from .rule_compiler import (
     CompileContext, RuleCompileError, compile_rule, dimension_for, referenced_entity,
@@ -44,8 +45,18 @@ def utcnow():
 def rules_for_entity(db: Session, entity_name: str, rule_ids: Optional[list] = None):
     """
     The approval gate: only APPROVED and active rules ever execute.
-    A DRAFT / PENDING / UPDATED / RETIRED rule exists but is inert.
+
+    Rules live in CONFIG_DB while runs/metrics/violations live in TARGET_DB,
+    so this opens its own config session rather than reusing the results one.
     """
+    cdb = ConfigSession()
+    try:
+        return _load_rules(cdb, entity_name, rule_ids)
+    finally:
+        cdb.close()
+
+
+def _load_rules(db: Session, entity_name: str, rule_ids: Optional[list] = None):
     q = db.query(ValRule).filter(
         ValRule.entity_name == entity_name,
         ValRule.status == "APPROVED",
@@ -70,7 +81,7 @@ def stage_run(db: Session, run_id: int, source_kind: str, file_path: Optional[st
     if source_kind == "file_upload":
         n = ingestion.stage_from_csv(db, run_id, entity, file_path)
     elif source_kind == "db_fetch":
-        n = ingestion.stage_from_db(db, run_id, entity)
+        n = ingestion.stage_from_db(db, run_id, entity, run.source_system)
     else:
         raise ValueError(f"Unknown source_kind: {source_kind}")
 

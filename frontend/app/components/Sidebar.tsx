@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { Role, getActor, getRole, setActor, setRole } from "@/lib/api";
+import { Role, SOURCE_SYSTEMS, getActor, getRole, setActor, setRole } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -27,6 +27,7 @@ export default function Sidebar() {
   const [healthy, setHealthy] = useState<boolean | null>(null);
   const [role, setRoleState] = useState<Role>("admin");
   const [actor, setActorState] = useState("prabhat");
+  const [source, setSourceState] = useState("Hybris");
 
   useEffect(() => {
     const saved = (localStorage.getItem("theme") as "light" | "dark") || null;
@@ -35,6 +36,7 @@ export default function Sidebar() {
     document.documentElement.setAttribute("data-theme", initial);
     setRoleState(getRole());
     setActorState(getActor());
+    setSourceState(localStorage.getItem("source") || "Hybris");
   }, []);
 
   useEffect(() => {
@@ -54,6 +56,13 @@ export default function Sidebar() {
     document.documentElement.setAttribute("data-theme", next);
   }
 
+  /** The dashboard reads this; a custom event avoids a full page reload. */
+  function changeSource(next: string) {
+    setSourceState(next);
+    localStorage.setItem("source", next);
+    window.dispatchEvent(new CustomEvent("dq-source", { detail: next }));
+  }
+
   function changeRole(next: Role) {
     setRoleState(next);
     setRole(next);
@@ -70,9 +79,15 @@ export default function Sidebar() {
       <div className="brand">
         <span className="mark">DQ</span>
         <span>
-          <div className="bt">SMTC Validation</div>
-          <div className="bs">Data Quality Framework</div>
+          <div className="bt">Data Quality Framework</div>
         </span>
+      </div>
+
+      <div className="src-pick">
+        <div className="nav-label">Data Source</div>
+        <select value={source} onChange={(e) => changeSource(e.target.value)}>
+          {SOURCE_SYSTEMS.map((s) => <option key={s}>{s}</option>)}
+        </select>
       </div>
 
       <nav className="nav">

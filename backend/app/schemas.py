@@ -81,6 +81,7 @@ class RulePreviewOut(BaseModel):
 class BatchTriggerDb(BaseModel):
     """No connection string, no SQL -- the server already knows both."""
     entity_names: list
+    source_system: Optional[str] = None
     batch_name: Optional[str] = None
     rule_ids: Optional[list] = None     # None/empty = all approved rules
     role: Optional[str] = "viewer"
@@ -108,6 +109,7 @@ class BatchOut(BaseModel):
     batch_id: int
     batch_name: Optional[str]
     run_type: str
+    source_system: Optional[str] = None
     triggered_by: Optional[str]
     started_at: datetime
     status: str                 # DERIVED from child runs, never stored

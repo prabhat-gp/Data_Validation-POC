@@ -30,7 +30,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base
 
-Base = declarative_base()
+# TWO metadata sets -- config tables and results tables live in different
+# databases (CONFIG_DB / TARGET_DB), so they must not share one MetaData.
+ConfigBase = declarative_base()
+ResultsBase = declarative_base()
+Base = ResultsBase          # back-compat for existing imports
 
 
 def utcnow():
@@ -50,6 +54,9 @@ def utcnow():
 #                          actionable ("record 001xx failed", not "row 4782")
 #   columns             -> the CDEs. ONLY these are staged; a 443-column source
 #                          export is pruned to just this list during ingestion.
+# Where data can come from. Drives the dashboard filter and the Runs page.
+SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"]
+
 ENTITIES: dict = {
     "Account": {
         "source_system": "SFDC",
@@ -62,46 +69,31 @@ ENTITIES: dict = {
             "ShippingStreet", "Type", "Website", "Region__c",
         ],
     },
-    "Contact": {
-        "source_system": "SFDC",
-        "source_object_name": "Contact",
-        "primary_key_field": "Id",
-        "columns": [
-            "FirstName", "LastName", "Email", "Phone", "Title",
-            "MailingCity", "MailingCountry", "MailingPostalCode", "MailingState",
-            "AccountId",
-        ],
+    # --- MySQL source_db (data_dump/b2b*.csv) -------------------------------
+    "B2B Customer": {
+        "source_system": "MySQL",
+        "source_object_name": "b2bcustomer",
+        "primary_key_field": "customer_id",
+        "columns": ["customer_name", "email", "status", "region", "sbg_id"],
     },
-    "Product": {
-        "source_system": "SFDC",
-        "source_object_name": "Product2",
-        "primary_key_field": "Id",
-        "columns": [
-            "Name", "ProductCode", "Family", "Description", "IsActive",
-            "QuantityUnitOfMeasure",
-        ],
+    "B2B Product": {
+        "source_system": "MySQL",
+        "source_object_name": "b2bproduct",
+        "primary_key_field": "product_id",
+        "columns": ["product_code", "product_name", "category", "status", "sbg_id"],
     },
-    "Account Team": {
-        "source_system": "SFDC",
-        "source_object_name": "AccountTeamMember",
-        "primary_key_field": "Id",
-        "columns": ["AccountId", "UserId", "TeamMemberRole", "AccountAccessLevel"],
+    "B2B Price": {
+        "source_system": "MySQL",
+        "source_object_name": "b2bprice",
+        "primary_key_field": "price_id",
+        "columns": ["product_id", "price_amount", "discount_pct", "status",
+                    "eff_date", "end_date"],
     },
-    # Numeric entity from the reference workbook -- R004 (RANGE on ORDER_AMOUNT)
-    # and R008 (AGGREGATION: orders per customer) both operate on this.
-    "Orders": {
-        "source_system": "HYBRIS",
-        "source_object_name": "ORDERS",
-        "primary_key_field": "CODE",
-        "columns": ["CUSTOMER_ID", "ORDER_AMOUNT", "ORDER_DATE", "STATUS",
-                    "PART_NUMBER", "CURRENCY"],
-    },
-    # Lookup/master entity for R007 (REFERENTIAL_INTEGRITY)
-    "Part Master": {
-        "source_system": "HYBRIS",
-        "source_object_name": "PART_MASTER",
-        "primary_key_field": "PART_NUMBER",
-        "columns": ["PART_NAME", "CATEGORY", "ACTIVE_FLAG"],
+    "B2B SBG": {
+        "source_system": "MySQL",
+        "source_object_name": "b2bsbg",
+        "primary_key_field": "sbg_id",
+        "columns": ["sbg_name"],
     },
 }
 
@@ -118,7 +110,7 @@ def staging_table_name(entity_name: str) -> str:
 # ---------------------------------------------------------------------------
 # LOOKUP TABLES
 # ---------------------------------------------------------------------------
-class ValRuleType(Base):
+class ValRuleType(ConfigBase):
     """The 8 supported rule types. `code` is what val_rules.rule_type stores."""
     __tablename__ = "val_rule_types"
 
@@ -128,13 +120,13 @@ class ValRuleType(Base):
     execution_type = Column(String(50), nullable=False)   # QUERY | RECORD (derived, never user input)
 
 
-class ValSeverity(Base):
+class ValSeverity(ConfigBase):
     __tablename__ = "val_severities"
     code = Column(String(20), primary_key=True)
     description = Column(String(255))
 
 
-class ValStatus(Base):
+class ValStatus(ConfigBase):
     __tablename__ = "val_statuses"
     code = Column(String(20), primary_key=True)
     description = Column(String(255))
@@ -143,7 +135,7 @@ class ValStatus(Base):
 # ---------------------------------------------------------------------------
 # CONFIG -- the single rules table
 # ---------------------------------------------------------------------------
-class ValRule(Base):
+class ValRule(ConfigBase):
     """
     One row = one validation rule. Self-describing: it names its own entity,
     field and key column, so nothing needs joining to interpret it.
@@ -157,7 +149,7 @@ class ValRule(Base):
     rule_id = Column(Integer, primary_key=True, autoincrement=True)   # simple 1, 2, 3…
     rule_name = Column(String(255), nullable=False)
     source_system = Column(String(100), nullable=False)
-    rule_type = Column(String(50), ForeignKey("val_rule_types.code"), nullable=False)
+    rule_type = Column(String(50), nullable=False)      # validated in code, not an FK
 
     entity_name = Column(String(255), nullable=False)        # was dq_object.object_name
     field_name = Column(String(255), nullable=False)         # was dq_element.element_name
@@ -167,8 +159,8 @@ class ValRule(Base):
     rule_definition = Column(Text)                           # JSON config -- source of truth
     error_message = Column(Text)                             # stamped onto each violation
 
-    severity = Column(String(20), ForeignKey("val_severities.code"), nullable=False)
-    status = Column(String(20), ForeignKey("val_statuses.code"), nullable=False, default="draft")
+    severity = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False, default="DRAFT")
     active = Column(Boolean, nullable=False, default=True)
 
     created_by = Column(String(100), nullable=False)
@@ -188,7 +180,7 @@ class ValRule(Base):
 # ---------------------------------------------------------------------------
 # EXECUTION
 # ---------------------------------------------------------------------------
-class ValBatch(Base):
+class ValBatch(ResultsBase):
     """
     What a user calls "a run": one trigger covering 1..N entities.
     Each entity inside it gets its own val_runs row, so one entity failing
@@ -200,11 +192,12 @@ class ValBatch(Base):
     batch_id = Column(Integer, primary_key=True, autoincrement=True)
     batch_name = Column(String(200))
     run_type = Column(String(20), nullable=False)     # file_upload | db_fetch
+    source_system = Column(String(50))                # SFDC | Hybris | MySQL | File Dump
     triggered_by = Column(String(100))
     started_at = Column(DateTime, default=utcnow)
 
 
-class ValRun(Base):
+class ValRun(ResultsBase):
     """One entity's execution within a batch."""
     __tablename__ = "val_runs"
 
@@ -212,6 +205,7 @@ class ValRun(Base):
     batch_id = Column(Integer, ForeignKey("val_batches.batch_id"), nullable=False)
     entity_name = Column(String(255), nullable=False)
     run_type = Column(String(20), nullable=False)
+    source_system = Column(String(50))
     status = Column(String(20), nullable=False, default="pending")  # pending|running|completed|failed
     started_at = Column(DateTime, default=utcnow)
     finished_at = Column(DateTime)
@@ -226,7 +220,7 @@ class ValRun(Base):
     )
 
 
-class ValMetric(Base):
+class ValMetric(ResultsBase):
     """
     One row per rule per run. The dashboard reads ONLY this table -- a few
     hundred rows per run -- never a live scan of val_violations. That is why
@@ -248,7 +242,7 @@ class ValMetric(Base):
     __table_args__ = (Index("ix_metric_run_entity", "run_id", "entity_name"),)
 
 
-class ValViolation(Base):
+class ValViolation(ResultsBase):
     """One row per failing record per rule per run -- the fix team's worklist."""
     __tablename__ = "val_violations"
 
@@ -270,26 +264,11 @@ class ValViolation(Base):
     )
 
 
-class ValReferenceValue(Base):
-    """
-    Supports Referential Integrity. Staging is cleared after every run, so a
-    rule on entity B cannot join directly against entity A's staged rows --
-    they may already be gone. Instead we persist just the DISTINCT values of
-    whichever field an approved ref_integrity rule points at.
-
-    Bootstrapping: a ref_integrity rule only sees values captured by the
-    REFERENCED entity's most recent completed run. If that entity has never
-    been validated the set is empty and the rule fails every row until it
-    runs once.
-    """
-    __tablename__ = "val_reference_values"
-
-    id = Column(Integer, primary_key=True)
-    entity_name = Column(String(255), nullable=False)
-    field_name = Column(String(255), nullable=False)
-    value = Column(Text, nullable=False)
-
-    __table_args__ = (Index("ix_refval_lookup", "entity_name", "field_name", "value"),)
+# NOTE: val_reference_values is gone. It existed to snapshot a referenced
+# entity's distinct values because staging was wiped between entities, which
+# forced REFERENTIAL_INTEGRITY to read the PREVIOUS run. The three-phase batch
+# (stage all -> validate all -> clear all) lets the rule do a real LEFT JOIN
+# against the lookup entity's live staging table, so the snapshot is obsolete.
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +290,7 @@ for _entity, _meta in ENTITIES.items():
     for _col in _meta["columns"]:
         _attrs[_col] = Column(_col, Text)
     STAGING_MODELS[_entity] = type(
-        f"Stg{re.sub(r'[^A-Za-z0-9]', '', _entity)}", (Base,), _attrs
+        f"Stg{re.sub(r'[^A-Za-z0-9]', '', _entity)}", (ResultsBase,), _attrs
     )
 
 

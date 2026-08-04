@@ -17,8 +17,11 @@ import sys
 
 from sqlalchemy.orm import Session
 
-from app.database import engine
-from app.models import Base, ENTITIES, ValRuleType, ValSeverity, ValStatus, staging_table_name
+from app.database import CONFIG_URL, RESULTS_URL, config_engine, results_engine
+from app.models import (
+    ConfigBase, ENTITIES, ResultsBase, ValRuleType, ValSeverity, ValStatus,
+    staging_table_name,
+)
 from app.rule_compiler import RULE_TYPE_DESCRIPTIONS, RULE_TYPE_META, RULE_TYPES
 
 # Matches the reference workbook (Sheet3)
@@ -43,14 +46,21 @@ STATUSES = [
 
 
 def main():
+    import re as _re
+    mask = lambda u: _re.sub(r":[^:@]*@", ":****@", u)
+    print(f"CONFIG  -> {mask(CONFIG_URL)}")
+    print(f"RESULTS -> {mask(RESULTS_URL)}\n")
+
     if "--reset" in sys.argv:
-        print("Dropping all tables...")
-        Base.metadata.drop_all(engine)
+        print("Dropping tables in both databases...")
+        ResultsBase.metadata.drop_all(results_engine)
+        ConfigBase.metadata.drop_all(config_engine)
 
     print("Creating tables...")
-    Base.metadata.create_all(engine)
+    ConfigBase.metadata.create_all(config_engine)
+    ResultsBase.metadata.create_all(results_engine)
 
-    with Session(engine) as db:
+    with Session(config_engine) as db:
         if db.query(ValRuleType).count() == 0:
             for code in RULE_TYPES:
                 dimension, execution_type = RULE_TYPE_META[code]
@@ -74,6 +84,8 @@ def main():
 
         db.commit()
 
+    print(f"\n  CONFIG_DB  : {sorted(ConfigBase.metadata.tables)}")
+    print(f"  TARGET_DB  : {sorted(ResultsBase.metadata.tables)}")
     print(f"\nEntities (from the ENTITIES constant, no catalog table):")
     for name, meta in ENTITIES.items():
         print(f"  {name:<16} -> {staging_table_name(name):<20} {len(meta['columns'])} columns")

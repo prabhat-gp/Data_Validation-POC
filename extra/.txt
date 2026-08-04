@@ -42,3 +42,26 @@ b. AWS Network Manager must be used to provision Security Groups to all EC2 inst
 
 21. Auto-remediation controls and policies must be in place so er
  
+
+
+ pip install -r backend/requirements.txt
+
+ CREATE DATABASE IF NOT EXISTS source_db;
+CREATE DATABASE IF NOT EXISTS config_db;
+CREATE DATABASE IF NOT EXISTS target_db;
+
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=<office laptop password>
+SOURCE_DB=source_db
+CONFIG_DB=config_db
+TARGET_DB=target_db
+
+cd backend
+python create_tables.py
+python seed_dummy.py --reset
+
+python -m uvicorn app.main:app --port 8000
+
+cd frontend && npm run dev

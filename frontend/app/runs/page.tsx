@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { API_BASE, api, Batch, Entity, SourceCheck, getActor } from "@/lib/api";
+import { API_BASE, SOURCE_SYSTEMS, api, Batch, Entity, SourceCheck, getActor } from "@/lib/api";
 
 interface FileSlot { file: File | null; entity: string }
 
@@ -19,6 +19,7 @@ export default function RunsPage() {
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [check, setCheck] = useState<SourceCheck | null>(null);
   const [checking, setChecking] = useState(false);
+  const [dbSource, setDbSource] = useState("MySQL");
 
   useEffect(() => {
     api.entities().then((e) => {
@@ -71,7 +72,7 @@ export default function RunsPage() {
     setBusy(true);
     try {
       const b = await api.runFromDb({
-        entity_names: dbSelected,
+        entity_names: dbSelected, source_system: dbSource,
         batch_name: `DB fetch · ${new Date().toLocaleString()}`,
         triggered_by: "prabhat",
       });
@@ -135,11 +136,12 @@ export default function RunsPage() {
             </>
           ) : (
             <>
-              <div className="srcrow">
-                <span className="fl">Source</span>
-                <span className="srcval">
-                  {entities[0]?.source_system || "—"} <span className="mini dim">· configured on the server</span>
-                </span>
+              <div className="fld" style={{ maxWidth: 260 }}>
+                <label>Source</label>
+                <select value={dbSource}
+                        onChange={(e) => { setDbSource(e.target.value); setCheck(null); setDbSelected([]); }}>
+                  {SOURCE_SYSTEMS.filter((s) => s !== "File Dump").map((s) => <option key={s}>{s}</option>)}
+                </select>
               </div>
               <p className="mini dim" style={{ margin: "10px 0 12px" }}>
                 Pick entities — the query is generated from the catalog. No connection details
@@ -148,7 +150,7 @@ export default function RunsPage() {
               <div className="checkrow">
                 <button className="btn-mini" disabled={checking} onClick={async () => {
                   setChecking(true); setCheck(null);
-                  try { setCheck(await api.checkSource()); }
+                  try { setCheck(await api.checkSource(dbSource)); }
                   catch (e: any) { setCheck({ ok: false, detail: String(e.message || e) }); }
                   finally { setChecking(false); }
                 }}>
@@ -161,7 +163,7 @@ export default function RunsPage() {
                 )}
                 {!check && <span className="mini dim">Test the source before running.</span>}
               </div>
-              {entities.map((e) => {
+              {entities.filter((e) => e.source_system === dbSource).map((e) => {
                 const disabled = e.approved_rule_count === 0;
                 return (
                   <label key={e.entity_name} className={`entrow${disabled ? " off" : ""}`}>
@@ -177,6 +179,9 @@ export default function RunsPage() {
                   </label>
                 );
               })}
+              {entities.filter((e) => e.source_system === dbSource).length === 0 && (
+                <p className="mini dim">No entities are configured for {dbSource}.</p>
+              )}
               <div className="form-actions">
                 <button className="btn-primary" onClick={submitDbRun}
                         disabled={busy || !dbSelected.length || !check?.ok}

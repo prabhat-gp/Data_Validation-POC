@@ -22,7 +22,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import get_config_db as get_db
 from ..models import ENTITIES, ValRule
 from ..models import ENTITIES, ValRule  # noqa: F811
 from ..rule_compiler import (

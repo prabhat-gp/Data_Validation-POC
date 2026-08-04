@@ -9,12 +9,21 @@ import ScoreGauge from "./ScoreGauge";
 
 export default function DashboardPage() {
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
-  const [source, setSource] = useState("db_fetch");   // sensible default
+  const [source, setSource] = useState("Hybris");
   const [batchId, setBatchId] = useState<number | null>(null);
   const [batchOpts, setBatchOpts] = useState<BatchOption[]>([]);
 
   // Run ID is meaningless without a source, so it stays disabled until one is
   // picked and then only offers batches from that source.
+  // the Data Source picker now lives in the sidebar
+  useEffect(() => {
+    const stored = localStorage.getItem("source");
+    if (stored) setSource(stored);
+    const onSrc = (e: any) => setSource(e.detail);
+    window.addEventListener("dq-source", onSrc);
+    return () => window.removeEventListener("dq-source", onSrc);
+  }, []);
+
   useEffect(() => {
     if (!source) { setBatchOpts([]); setBatchId(null); return; }
     api.batchOptions(source)
@@ -32,28 +41,16 @@ export default function DashboardPage() {
         <div>
           <h1>Data Validation Dashboard</h1>
           <div className="sub">
-            {selectedObjectId ? "Object drilldown" : "All objects · database overview"}
+            {selectedObjectId ? "Object drilldown" : `${source} · all objects`}
           </div>
         </div>
         <div className="spacer" />
         <div className="flt">
-          <span className="fl">Data Source</span>
-          <select value={source} onChange={(e) => { setSource(e.target.value); setBatchId(null); }}>
-            <option value="">All sources</option>
-            <option value="db_fetch">Database</option>
-            <option value="file_upload">File upload</option>
-          </select>
-        </div>
-        <div className="flt">
           <span className="fl">Run ID</span>
-          <select value={batchId ?? ""} disabled={!source}
+          <select value={batchId ?? ""}
                   onChange={(e) => setBatchId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">Latest per object</option>
-            {batchOpts.map((b) => (
-              <option key={b.batch_id} value={b.batch_id}>
-                #{b.batch_id} · {b.entity_count} obj
-              </option>
-            ))}
+            <option value="">Latest</option>
+            {batchOpts.map((b) => <option key={b.batch_id} value={b.batch_id}>#{b.batch_id}</option>)}
           </select>
         </div>
         <div className="flt">

@@ -10,34 +10,40 @@
    RAG thresholds stay as approved: >90 green, 80-90 amber, <80 red.
 --------------------------------------------------------------------- */
 :root {
-  --bg: #f4f6fa; --panel: #fff; --panel-2: #f7f9fc; --sidebar: #fff;
-  --ink: #141a22; --ink-soft: #5a6675; --ink-faint: #8a94a3;
-  --line: #e2e8f0; --line-soft: #eef2f7;
-  --accent: #2f5fd0; --accent-soft: #e7eefb; --accent-ink: #2f5fd0;
+  /* Honeywell AEROSPACE (post-June-2026 spin-off, ticker HONA) -- NOT the
+     Honeywell Technologies red. Sampled from honeywellaerospace.com:
+       sunrise orange  #ff4400  (the signature colour)
+       neutrals        #1e1e25 / #303030 / #777e80 / #ced4da  (silver accents)
+     Brand is orange + neutrals only, so greys carry the structure and orange
+     is reserved for identity and interaction. */
+  --bg: #f4f5f6; --panel: #fff; --panel-2: #f7f8f9; --sidebar: #fff;
+  --ink: #1e1e25; --ink-soft: #5a6063; --ink-faint: #777e80;
+  --line: #ced4da; --line-soft: #e6e9ec;
+  --accent: #ff4400; --accent-soft: #fff0eb; --accent-ink: #cc3600;
   --good: #1f9d57; --good-bg: #e4f5ec; --warn: #c98510; --warn-bg: #fbf1dd;
-  --crit: #cf3b3b; --crit-bg: #fbe4e4; --violet: #6d3bd6; --violet-bg: #f1ebfd;
-  --shadow: 0 1px 2px rgba(20,26,34,.05), 0 4px 16px rgba(20,26,34,.05);
-  --shadow-lg: 0 2px 4px rgba(20,26,34,.06), 0 12px 32px rgba(20,26,34,.10);
+  --crit: #d9342b; --crit-bg: #fdeae8; --violet: #495057; --violet-bg: #eceef0;
+  --shadow: 0 1px 2px rgba(30,30,37,.05), 0 4px 16px rgba(30,30,37,.05);
+  --shadow-lg: 0 2px 4px rgba(30,30,37,.06), 0 12px 32px rgba(30,30,37,.10);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b0f16; --panel: #141b25; --panel-2: #1a222e; --sidebar: #10161f;
-    --ink: #e8edf4; --ink-soft: #a9b6c7; --ink-faint: #8894a6;
-    --line: #2b3746; --line-soft: #232d3b;
-    --accent: #6c9bff; --accent-soft: #17233a; --accent-ink: #8ab2ff;
+    --bg: #131318; --panel: #1e1e25; --panel-2: #26262e; --sidebar: #17171c;
+    --ink: #f0f1f2; --ink-soft: #b4b9bb; --ink-faint: #8b9296;
+    --line: #383840; --line-soft: #2b2b33;
+    --accent: #ff5c1f; --accent-soft: #3a1a0d; --accent-ink: #ff8552;
     --good: #3ecb7f; --good-bg: #102c20; --warn: #e0a83c; --warn-bg: #2e240f;
-    --crit: #f16b6b; --crit-bg: #301719; --violet: #a888f0; --violet-bg: #221a38;
+    --crit: #f2564a; --crit-bg: #3a1614; --violet: #b4b9bb; --violet-bg: #2b2b33;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
     --shadow-lg: 0 2px 4px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.45);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0b0f16; --panel: #141b25; --panel-2: #1a222e; --sidebar: #10161f;
-  --ink: #e8edf4; --ink-soft: #a9b6c7; --ink-faint: #8894a6;
-  --line: #2b3746; --line-soft: #232d3b;
-  --accent: #6c9bff; --accent-soft: #17233a; --accent-ink: #8ab2ff;
+  --bg: #131318; --panel: #1e1e25; --panel-2: #26262e; --sidebar: #17171c;
+  --ink: #f0f1f2; --ink-soft: #b4b9bb; --ink-faint: #8b9296;
+  --line: #383840; --line-soft: #2b2b33;
+  --accent: #ff5c1f; --accent-soft: #3a1a0d; --accent-ink: #ff8552;
   --good: #3ecb7f; --good-bg: #102c20; --warn: #e0a83c; --warn-bg: #2e240f;
-  --crit: #f16b6b; --crit-bg: #301719; --violet: #a888f0; --violet-bg: #221a38;
+  --crit: #f2564a; --crit-bg: #3a1614; --violet: #b4b9bb; --violet-bg: #2b2b33;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
   --shadow-lg: 0 2px 4px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.45);
 }
@@ -59,7 +65,7 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 20px; }
 .brand .mark {
   width: 34px; height: 34px; border-radius: 9px; flex: none;
-  background: linear-gradient(135deg, var(--accent), var(--violet));
+  background: linear-gradient(135deg, var(--accent), #ff7a3d);
   display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 15px;
   box-shadow: var(--shadow);
 }
@@ -601,3 +607,12 @@ td.rname { font-weight: 650; font-size: 12.5px; max-width: 220px;
   display: flex; flex-direction: column; gap: 4px; }
 .legend-notes li { font-size: 11.5px; color: var(--ink-soft); }
 th.th-acts { width: 44px; }
+
+/* Data Source picker in the sidebar */
+.src-pick { padding: 0 14px; margin-bottom: 18px; }
+.src-pick select {
+  width: 100%; padding: 8px 10px; font-size: 12.5px; font-weight: 650;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--ink); font-family: inherit;
+}
+.brand .bt { font-size: 13.5px; font-weight: 750; line-height: 1.25; }
