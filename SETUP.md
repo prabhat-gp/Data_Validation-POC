@@ -1,22 +1,77 @@
-# Office laptop — bringing it up to date
+# Office laptop — build from scratch
 
-Assumes the office laptop **already has** `source_db` with the original CSV
-import:
+One command builds everything: the three databases, all source tables with
+their rows (correct and deliberately wrong), the full `val_*` schema, and the
+23 approved rules.
 
-| Table | Rows before |
+```bash
+git pull
+venv\Scripts\activate
+pip install -r backend/requirements.txt
+```
+
+> macOS/Linux: `source venv/bin/activate`
+
+Copy `backend/.env.example` to `backend/.env` and set `DB_PASSWORD` to the
+office MySQL password. Then:
+
+```bash
+cd backend
+python bootstrap.py --force
+```
+
+`--force` **DROPS** `source_db`, `config_db` and `target_db` and rebuilds them.
+Without it the script refuses to touch databases that already exist.
+
+Expected:
+
+```
+  source_db
+    b2bsbg              7 rows
+    b2bcustomer        46 rows
+    b2bproduct         35 rows
+    b2bprice           38 rows
+    TOTAL             126 rows
+  config_db
+    val_rules          23 rows
+  target_db
+    (empty until you run)
+```
+
+Then:
+
+```bash
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+```bash
+cd frontend && npm install && npm run dev
+```
+
+**Runs** → source **MySQL** → all four objects → start. Expect roughly:
+
+| KPI | Value |
 |---|---|
-| `b2bsbg` | 5 |
-| `b2bcustomer` | 20 |
-| `b2bproduct` | 11 |
-| `b2bprice` | 10 |
+| Overall DQ Score | 93.7% |
+| Objects Checked | 4 |
+| CDEs Checked | 13 |
+| Records Scanned | 126 |
+| Records Affected | 53 |
+| Critical Failed Checks | 35 |
+| Rule Coverage | 76.5% |
 
-Those rows stay. This adds the new rows and the new rules on top, then you run
-a validation there to confirm the office laptop works end to end. Nothing is
-copied across from the home laptop's run.
+Optional, to give Hybris / SFDC / File Dump something on the dashboard:
 
-Commands shown for **Windows**; macOS/Linux note under each.
+```bash
+python seed_dummy.py --reset
+```
 
 ---
+
+## Doing it step by step instead
+
+`bootstrap.py` just runs these in order. Use them individually if you only need
+one part.
 
 ## 1. Pull
 
