@@ -31,10 +31,24 @@ from sqlalchemy.orm import Session
 
 from . import ingestion
 from .database import ConfigSession
-from .models import ENTITIES, ValMetric, ValRule, ValRun, ValViolation, staging_table_name
+from .models import (
+    ENTITIES, MULTI_FIELD_SEP, ValMetric, ValRule, ValRun, ValViolation,
+    staging_table_name,
+)
 from .rule_compiler import (
     CompileContext, RuleCompileError, compile_rule, dimension_for, referenced_entity,
 )
+
+
+def _dimension(rule) -> str:
+    """
+    The dimension this rule's metrics are filed under.
+
+    Read from the rule, because the author may have reclassified it away from
+    the rule type's default. Falls back to the default for rules created
+    before dimension was stored.
+    """
+    return rule.dimension or dimension_for(rule.rule_type)
 
 
 def _display_field(rule) -> str:
@@ -51,8 +65,9 @@ def _display_field(rule) -> str:
         cfg = {}
     for key in ("fields", "groupBy"):
         if cfg.get(key):
-            return " + ".join(cfg[key])
+            return MULTI_FIELD_SEP.join(cfg[key])
     return rule.rule_name or "-"
+
 
 VIOLATION_BATCH_SIZE = 5000
 
@@ -161,7 +176,7 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
             # a broken rule must not take down the run -- record 0/0 and move on
             db.add(ValMetric(
                 run_id=run_id, rule_id=rule.rule_id, entity_name=entity,
-                field_name=_display_field(rule), dimension=dimension_for(rule.rule_type),
+                field_name=_display_field(rule), dimension=_dimension(rule),
                 severity=rule.severity, records_checked=scanned, records_failed=0,
                 score_pct=0.0,
             ))
@@ -182,7 +197,7 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
         score = 0.0 if checked == 0 else round((checked - failed) / checked * 100, 2)
         db.add(ValMetric(
             run_id=run_id, rule_id=rule.rule_id, entity_name=entity,
-            field_name=_display_field(rule), dimension=dimension_for(rule.rule_type),
+            field_name=_display_field(rule), dimension=_dimension(rule),
             severity=rule.severity, records_checked=checked, records_failed=failed,
             score_pct=score,
         ))
@@ -204,7 +219,7 @@ def _execute(db: Session, run_id: int, rule: ValRule, compiled) -> int:
             "current_value": row.current_value,
             "violation_reason": rule.error_message or _default_reason(rule.rule_type, rule.field_name),
             "severity": rule.severity,
-            "dimension": dimension_for(rule.rule_type),
+            "dimension": _dimension(rule),
         })
         failed += 1
         if len(batch) >= VIOLATION_BATCH_SIZE:
@@ -240,6 +255,14 @@ def finish_run(db: Session, run_id: int, error: Optional[str] = None):
     run = db.get(ValRun, run_id)
     run.phase = "done"
     run.status = "failed" if error else "completed"
+    # How many RECORDS are affected, as distinct from how many CHECKS failed.
+    # One row failing three rules is 3 failed checks but 1 bad record, and the
+    # second number is the one a reviewer actually means by "how bad is it".
+    if not error:
+        run.records_affected = db.execute(
+            text("SELECT COUNT(DISTINCT record_key) FROM val_violations WHERE run_id = :r"),
+            {"r": run_id},
+        ).scalar() or 0
     run.error_message = error[:2000] if error else None
     run.finished_at = utcnow()
     db.commit()

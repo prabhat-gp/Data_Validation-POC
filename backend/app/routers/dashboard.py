@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import ENTITIES, ValBatch, ValMetric, ValRun
+from ..models import elements_in, ENTITIES, ValBatch, ValMetric, ValRun
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -26,6 +26,31 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 # dashboard's blocking counts cover both.
 BLOCKING = {"CRITICAL", "ERROR"}
 NON_BLOCKING = {"WARNING", "INFO"}
+_SEV_RANK = {"INFO": 1, "WARNING": 2, "ERROR": 3, "CRITICAL": 4}
+
+
+def _covered_elements(state_row, meta=None) -> set:
+    """
+    The distinct data elements an object's rules actually covered.
+
+    NOT the number of metrics -- there is one metric per RULE, and several
+    rules commonly target the same element (email has Completeness, Validity
+    and Uniqueness rules). Counting metrics reported 13 "elements checked" for
+    an object with 5 columns.
+
+    A multi-field rule's label ("customer_name + sbg_id") is expanded into the
+    real columns it covers, so it counts as the two elements it checks rather
+    than as one column of that name. Anything that still is not a declared
+    column of the object is dropped -- a rule-name fallback label is not an
+    element.
+    """
+    cols = set(meta["columns"]) if meta else None
+    out = set()
+    for m in state_row["metrics"]:
+        for name in elements_in(m.field_name):
+            if cols is None or name in cols:
+                out.add(name)
+    return out
 
 
 def _latest_completed_run(db: Session, entity_name: Optional[str] = None,
@@ -90,13 +115,14 @@ def kpis(batch_id: Optional[int] = None, source_system: Optional[str] = None, db
     overall = round((checked - failed) / checked * 100, 1) if checked else None
     critical_failed = sum(m.records_failed for m in all_metrics if m.severity in BLOCKING)
 
-    # Rule coverage: distinct fields with a metric, over the entity's declared CDEs
+    # Rule coverage: distinct ELEMENTS with a rule run, over declared elements.
+    # Counted per object, so sbg_id on Customer and on Product are two CDEs.
     total_fields, covered_fields = 0, 0
     for s in state:
         meta = ENTITIES.get(s["entity_name"])
         if meta:
             total_fields += len(meta["columns"])
-        covered_fields += len({m.field_name for m in s["metrics"]})
+        covered_fields += len(_covered_elements(s, meta))
     coverage = round(covered_fields / total_fields * 100, 1) if total_fields else 0
 
     return {
@@ -105,7 +131,15 @@ def kpis(batch_id: Optional[int] = None, source_system: Optional[str] = None, db
         # distinct CDEs that actually had a rule run against them
         "cdes_checked": covered_fields,
         "records_scanned": sum(s["run"].records_scanned or 0 for s in state),
+        # RECORDS with at least one violation -- a different question from
+        # "how many checks failed". One row breaking three rules is 3 failed
+        # checks but 1 bad record. Precomputed on the run; see finish_run().
+        "records_affected": sum(s["run"].records_affected or 0 for s in state),
         "critical_failed_checks": critical_failed,
+        # The DQ score's denominator. Published so the UI can show
+        # "38 of 890 checks" rather than inviting 38/128.
+        "checks_run": checked,
+        "checks_failed": failed,
         "rule_coverage_pct": min(coverage, 100.0),
     }
 
@@ -137,18 +171,37 @@ def heatmap(batch_id: Optional[int] = None, source_system: Optional[str] = None,
 
 @router.get("/top-failing")
 def top_failing(limit: int = 5, batch_id: Optional[int] = None, source_system: Optional[str] = None, db: Session = Depends(get_db)):
-    items = []
+    """
+    Worst ELEMENTS, one row each -- not one row per rule.
+
+    Several rules commonly target the same element (email has Completeness,
+    Validity and Uniqueness rules), so emitting a row per metric listed the
+    same element two or three times. Checks are pooled per element, the same
+    way every other score in the app is computed, and the severity shown is
+    the worst one among that element's failing rules.
+    """
+    agg = {}
     for s in _current_state(db, batch_id, source_system):
         for m in s["metrics"]:
-            if m.records_failed > 0:
-                items.append({
-                    "element_name": m.field_name,
-                    "object_name": m.entity_name,
-                    "score_pct": m.score_pct,
-                    "records_failed": m.records_failed,
-                    "severity": m.severity,
-                })
-    items.sort(key=lambda x: x["score_pct"])
+            key = (m.entity_name, m.field_name)
+            a = agg.setdefault(key, {"checked": 0, "failed": 0, "sev": "INFO"})
+            a["checked"] += m.records_checked
+            a["failed"] += m.records_failed
+            if m.records_failed > 0 and _SEV_RANK.get(m.severity, 0) > _SEV_RANK.get(a["sev"], 0):
+                a["sev"] = m.severity
+
+    items = [
+        {
+            "element_name": field,
+            "object_name": entity,
+            "score_pct": round((a["checked"] - a["failed"]) / a["checked"] * 100, 2),
+            "records_failed": a["failed"],
+            "severity": a["sev"],
+        }
+        for (entity, field), a in agg.items()
+        if a["failed"] > 0 and a["checked"] > 0
+    ]
+    items.sort(key=lambda x: (x["score_pct"], -x["records_failed"]))
     return items[:limit]
 
 
@@ -264,7 +317,11 @@ def entity_drilldown(entity_name: str, run_id: Optional[int] = None,
         "object_id": entity_name,
         "object_name": entity_name,
         "overall_score": round((checked - failed) / checked * 100, 1) if checked else 0,
-        "elements_checked": len(metrics),
+        # distinct elements covered, NOT the rule count -- several rules
+        # commonly target the same element
+        "elements_checked": len(_covered_elements(
+            {"metrics": metrics}, ENTITIES.get(entity_name))),
+        "checks_run": len(metrics),
         "records_scanned": run.records_scanned or 0,
         "dimension_scores": {
             d: round((v["checked"] - v["failed"]) / v["checked"] * 100, 1) if v["checked"] else 0

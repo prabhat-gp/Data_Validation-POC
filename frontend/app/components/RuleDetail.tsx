@@ -80,8 +80,14 @@ export default function RuleDetail({
         <div className="rc-grid">
           <span>Object</span><b>{rule.entity_name}</b>
           <span>Element</span><b>{rule.field_name || "— multi-element —"}</b>
-          <span>Type</span><b>{rule.rule_type.replace(/_/g, " ")}</b>
-          <span>Dimension</span><b>{result?.dimension || "—"}</b>
+          <span>Rule Type</span><b>{rule.rule_type.replace(/_/g, " ")}</b>
+          {/* Read-only. Dimension is decided by the backend from rule_type, so
+              it is shown next to the type rather than offered as a choice. */}
+          <span>Dimension</span>
+          <b>
+            {rule.dimension || result?.dimension || "—"}
+            <span className="rc-derived">set by rule type</span>
+          </b>
           <span>Key</span><b>{rule.primary_key_field}</b>
           {rows.map(([k, v], i) => (
             <React.Fragment key={i}><span>{k}</span><b>{v}</b></React.Fragment>

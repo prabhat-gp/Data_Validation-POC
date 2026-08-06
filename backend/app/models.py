@@ -107,6 +107,20 @@ def staging_table_name(entity_name: str) -> str:
     return f"stg_{slug}"
 
 
+# A rule with no single field_name (multi-field UNIQUENESS, grouped
+# AGGREGATION) is labelled with the combination it checks, joined by this.
+# The dashboard splits on it to count the REAL elements a rule covers:
+# "customer_name + sbg_id" is TWO elements, not a column of that name.
+# Both producer (validation_engine._display_field) and consumer (the dashboard
+# counters) must use this constant, or the element counts silently drift.
+MULTI_FIELD_SEP = " + "
+
+
+def elements_in(field_label: str) -> list:
+    """The real element names behind one metric's field_name label."""
+    return [f.strip() for f in (field_label or "").split(MULTI_FIELD_SEP) if f.strip()]
+
+
 # ---------------------------------------------------------------------------
 # LOOKUP TABLES
 # ---------------------------------------------------------------------------
@@ -156,6 +170,12 @@ class ValRule(ConfigBase):
     primary_key_field = Column(String(255), nullable=False)  # was dq_object.record_key_column
 
     execution_type = Column(String(50), nullable=False)      # QUERY | RECORD (derived from rule_type)
+    # Which quality dimension this rule reports under. DERIVED from rule_type
+    # via RULE_TYPE_META and stamped at create time -- never user input, so a
+    # REFERENTIAL_INTEGRITY rule can only ever be Integrity. Stored rather than
+    # resolved at read time so the results side needs no lookup. To change the
+    # classification, edit RULE_TYPE_META and run `migrate_db.py --apply`.
+    dimension = Column(String(40))
     rule_definition = Column(Text)                           # JSON config -- source of truth
     error_message = Column(Text)                             # stamped onto each violation
 
@@ -215,6 +235,10 @@ class ValRun(ResultsBase):
     rules_total = Column(Integer, default=0)
     rules_done = Column(Integer, default=0)
     rules_executed = Column(Integer, default=0)
+    # Distinct records with at least one violation. Computed ONCE when the run
+    # finishes, because the dashboard must never scan val_violations live --
+    # that table runs to millions of rows while val_runs is one row per entity.
+    records_affected = Column(Integer, default=0)
     source_file_name = Column(String(300))
     error_message = Column(Text)
 

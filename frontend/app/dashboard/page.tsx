@@ -127,12 +127,12 @@ function Overview({ onSelectObject, onObjects, batchId, source }: {
   return (
     <>
       <div className="kpis k6">
-        <Kpi label="Overall DQ Score" value={`${kpis.overall_dq_score ?? "—"}%`} strip={ragStrip(kpis.overall_dq_score)} sub="weighted across all objects" />
+        <Kpi label="Overall DQ Score" value={`${kpis.overall_dq_score ?? "—"}%`} strip={ragStrip(kpis.overall_dq_score)} sub={`${fmt(kpis.checks_run - kpis.checks_failed)} of ${fmt(kpis.checks_run)} checks passed`} />
         <Kpi label="Objects Checked" value={kpis.objects_checked} strip="acc" sub="Critical Data Objects" />
         <Kpi label="CDEs Checked" value={kpis.cdes_checked} strip="acc" sub="Critical Data Elements" />
-        <Kpi label="Total Records Scanned" value={fmt(kpis.records_scanned)} strip="acc" sub={`${kpis.objects_checked} objects`} />
-        <Kpi label="Critical Failed Checks" value={fmt(kpis.critical_failed_checks)} strip="crit" sub="Critical + Error" />
-        <Kpi label="Rule Coverage" value={`${kpis.rule_coverage_pct}%`} strip="acc" sub="CDEs with active rules" />
+        <Kpi label="Records Scanned" value={fmt(kpis.records_scanned)} strip="acc" sub={`${kpis.objects_checked} objects · ${fmt(kpis.records_affected)} affected`} />
+        <Kpi label="Critical Failed Checks" value={fmt(kpis.critical_failed_checks)} strip="crit" sub={`of ${fmt(kpis.checks_run)} checks run`} />
+        <Kpi label="Rule Coverage" value={`${kpis.rule_coverage_pct}%`} strip="acc" sub={`${kpis.cdes_checked} CDEs have rules`} />
       </div>
 
       <div className="row" style={{ gridTemplateColumns: "1.55fr 1fr" }}>
@@ -235,7 +235,7 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
 
       <div className="kpis k4">
         <Kpi label="Overall DQ Score" value={`${data.overall_score}%`} strip={ragStrip(data.overall_score)} sub={data.object_name} />
-        <Kpi label="Elements Checked" value={data.elements_checked} strip="acc" sub="Critical Data Elements" />
+        <Kpi label="Elements Checked" value={data.elements_checked} strip="acc" sub={`${data.checks_run} checks run`} />
         <Kpi label="Records Scanned" value={fmt(data.records_scanned)} strip="acc" sub="this object" />
         <Kpi label="Failing Checks" value={fmt(totalFailed)} strip="warn" sub="this object" />
       </div>
@@ -255,7 +255,7 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
           />
         </div>
         <div className="panel">
-          <h4>{data.object_name} · Data Elements <span className="hint">click a row to see the rule behind it</span></h4>
+          <h4>{data.object_name} · Data Elements <span className="hint">{data.checks_run} checks across {data.elements_checked} element{data.elements_checked === 1 ? "" : "s"} · click a row to see the rule behind it</span></h4>
           <table className="cde">
             <thead>
               <tr><th>Element</th><th>Dimension</th><th>Score</th><th>Failed</th><th>Severity</th></tr>

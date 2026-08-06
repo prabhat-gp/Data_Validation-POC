@@ -36,9 +36,9 @@ function shortLabel(d: string) {
   return ({
     Completeness: "Complete",
     Validity: "Valid",
-    Format: "Format",
     Uniqueness: "Unique",
-    "Ref Integrity": "Ref Int",
-    Relationship: "Relation",
+    Consistency: "Consist",
+    Integrity: "Integrity",
+    Accuracy: "Accuracy",
   } as Record<string, string>)[d] || d;
 }

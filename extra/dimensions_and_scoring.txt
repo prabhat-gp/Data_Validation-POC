@@ -1,0 +1,294 @@
+================================================================================
+ QUALITY DIMENSIONS AND SCORING
+ SMTC Data Validation Framework
+================================================================================
+
+--------------------------------------------------------------------------------
+ PART 1 - THE SIX DIMENSIONS
+--------------------------------------------------------------------------------
+
+Nine rule types report under six quality dimensions.
+
+  Dimension      Default from                        Question it answers
+  -------------  ----------------------------------  ------------------------------
+  Completeness   COMPLETENESS                        Is the value there?
+  Validity       VALIDITY, ALLOWED_VALUES, RANGE     Does it conform to a defined
+                                                     format or domain?
+  Uniqueness     UNIQUENESS                          Is it recorded exactly once?
+  Consistency    CROSS_FIELD_SIMPLE, CUSTOM_SQL      Do fields agree with each other?
+  Integrity      REFERENTIAL_INTEGRITY               Does the reference resolve?
+  Accuracy       AGGREGATION                         Is the value plausible against
+                                                     reality?
+
+Defined once, in backend/app/rule_compiler.py:
+
+    DIMENSIONS        the six names, in heatmap column order
+    RULE_TYPE_META    rule type -> (default dimension, execution type)
+
+The frontend mirrors it in frontend/lib/api.ts as DIMENSION_ORDER and
+DIMENSION_FOR_TYPE. If the two ever disagree, the dashboard breaks silently:
+a name the engine never emits becomes a column of permanent dashes, and one
+the engine emits but the UI omits hides real failures. Change both together.
+
+
+ DIMENSION IS NOT USER INPUT
+--------------------------------------------------------------------------------
+The mapping above is the ONLY thing that decides a rule's dimension. There is
+no dimension field in the rule form and none in the create/update API - a
+value sent by a client is ignored, not honoured.
+
+That is deliberate. Rule authors are data owners, not data-quality theorists;
+asking them to classify would eventually file a REFERENTIAL_INTEGRITY rule
+under Accuracy, and every heatmap and dimension score downstream would be
+wrong with no way to notice.
+
+Where it is stamped:
+    routers/rules.py   create_rule / update_rule -> dimension_for(rule_type)
+    val_rules.dimension            stored, so results need no lookup
+    val_metrics.dimension          copied at run time from the rule
+
+Currently Validity (VALIDITY, ALLOWED_VALUES, RANGE) and Consistency
+(CROSS_FIELD_SIMPLE, CUSTOM_SQL) are many-to-one; the other four are 1:1.
+
+TO CHANGE THE CLASSIFICATION
+    1. edit RULE_TYPE_META in backend/app/rule_compiler.py
+    2. mirror DIMENSION_ORDER in frontend/lib/api.ts if a NAME changed
+    3. python migrate_db.py --apply
+       re-stamps every existing rule from the new mapping and re-points
+       historical val_metrics / val_violations rows
+
+The UI only DISPLAYS it: the rules table has a Dimension column, and the rule
+modal shows Rule Type and Dimension together, tagged "set by rule type".
+
+
+ WHY NOT TIMELINESS
+--------------------------------------------------------------------------------
+Timeliness is a standard DAMA dimension and is deliberately NOT here. No rule
+type measures freshness - there is no as-of date and no SLA in the model. A
+Timeliness column would be permanently empty.
+
+That is exactly the bug this rework fixed. Before it, the heatmap declared
+"Format" and "Relationship" columns that the engine never emitted, so they read
+"-" on every real row, while "Consistency" WAS emitted and had no column at
+all - hiding 4 rules' worth of failures.
+
+Adding Timeliness means adding a rule type first, e.g.
+
+    FRESHNESS   MAX(updated_at) must be within N days of the run date
+
+
+ RETIRED LABELS
+--------------------------------------------------------------------------------
+    Ref Integrity  ->  Integrity     (renamed)
+    Relationship   ->  Integrity     (was Ref Integrity under a second name)
+    Format         ->  Validity      (the workbook itself writes VALIDITY/FORMAT
+                                      as one thing, on R003)
+
+migrate_db.py re-points historical val_metrics rows carrying these.
+
+
+--------------------------------------------------------------------------------
+ PART 2 - HOW SCORING WORKS
+--------------------------------------------------------------------------------
+
+Three levels, all the same pooled formula.
+
+
+ LEVEL 1 - PER RULE  (one val_metrics row per rule per run)
+--------------------------------------------------------------------------------
+    score_pct = (records_checked - records_failed) / records_checked * 100
+
+  records_checked  rows the rule's SQL evaluated
+  records_failed   rows it returned as violations
+
+For AGGREGATION the denominator is GROUPS, not rows - 8 SBGs, not 46
+customers - because the violation genuinely is the group. The compiler emits a
+separate denominator_sql for this.
+
+
+ LEVEL 2 - PER DIMENSION, PER OBJECT  (a heatmap cell)
+--------------------------------------------------------------------------------
+POOLED across that dimension's rules. NOT an average of rule scores.
+
+    SUM(checked) - SUM(failed)
+    --------------------------  * 100
+          SUM(checked)
+
+Pooling means a rule that scanned 138 rows outweighs one that scanned 8.
+Deliberate: more data is more evidence. Averaging rule scores would let a rule
+that checked 8 rows swing the cell as hard as one that checked thousands.
+
+
+ LEVEL 3 - OBJECT OVERALL, AND THE GLOBAL DQ SCORE
+--------------------------------------------------------------------------------
+Same formula, pooled across all of an object's dimensions; then across all
+objects for the headline number.
+
+
+ WORKED EXAMPLE - B2B Price, run #4
+--------------------------------------------------------------------------------
+    Validity      76 checked    8 failed    (76-8)/76   = 89.5%
+    Integrity     38 checked    4 failed    (38-4)/38   = 89.5%
+    Accuracy      27 checked    9 failed    (27-9)/27   = 66.7%
+                 ------------  ----------
+    overall      141 checked   21 failed  (141-21)/141  = 85.1%
+
+Before the fix, Accuracy was filed as "Consistency", which had no heatmap
+column. The row showed VALID 90, REF INT 90, everything else "-", OVERALL 85 -
+two cells at 90 that cannot average to 85, because the 66.7% cell driving the
+number was invisible.
+
+
+ THREE PROPERTIES WORTH KNOWING
+--------------------------------------------------------------------------------
+1. It is CHECKS PASSED / CHECKS RUN, not clean rows.
+   A customer failing both Completeness and Validity on `email` counts twice.
+   This is the standard rule-pass-rate definition and it is what makes
+   dimensions comparable - but 93.1% does NOT mean "93.1% of rows are
+   perfect". Say this out loud in any review.
+
+2. A dimension with no rules for an object shows "-", never 0.
+   Zero would read as total failure. Absence of a check is not a failure.
+
+3. RECLASSIFYING A DIMENSION CANNOT CHANGE ANY SCORE.
+   Pooling runs over all metrics regardless of label, so moving a rule from
+   Consistency to Accuracy changes which column its failures land in and
+   nothing else. Object overall and the global DQ score are identical before
+   and after. You can reclassify freely without invalidating past runs'
+   headline numbers.
+
+
+ WHAT COUNTS AS A BLOCKING FAILURE
+--------------------------------------------------------------------------------
+Separate from scoring. The "Critical Failed Checks" KPI counts severity in
+
+    BLOCKING     = CRITICAL, ERROR
+    NON-BLOCKING = WARNING, INFO
+
+Severity is independent of dimension: a Completeness rule can be INFO and an
+Accuracy rule CRITICAL. Dimension says what kind of problem it is; severity
+says how much it matters.
+
+
+--------------------------------------------------------------------------------
+ PART 3 - WHERE THIS LIVES IN THE CODE
+--------------------------------------------------------------------------------
+
+  backend/app/rule_compiler.py    DIMENSIONS, RULE_TYPE_META, RETIRED_DIMENSIONS
+                                  dimension_for(rule_type) -> the default
+  backend/app/models.py           ValRule.dimension  (config_db)
+                                  ValMetric.dimension (target_db, denormalized
+                                  so the dashboard never joins across databases)
+  backend/app/routers/rules.py    _resolve_dimension() - validates an override
+                                  against DIMENSIONS, rejects anything else
+  backend/app/validation_engine.py _dimension(rule) - reads the STORED value,
+                                  falling back to the type default
+  backend/app/routers/dashboard.py heatmap() - the pooling above
+  backend/migrate_db.py           adds the column, backfills val_rules, and
+                                  re-points retired labels on val_metrics
+  frontend/lib/api.ts             DIMENSION_ORDER, DIMENSION_FOR_TYPE
+  frontend/app/dashboard/Heatmap.tsx  column headers
+  frontend/app/rules/page.tsx     the Dimension dropdown and table column
+  frontend/app/components/RuleDetail.tsx  Dimension row in both modals
+
+Dimension is denormalized onto val_metrics at run time. Historical rows keep
+whatever label they were written with, which is why migrate_db.py has to
+re-point them rather than the dashboard resolving it live.
+
+--------------------------------------------------------------------------------
+ PART 4 - ELEMENTS vs CHECKS  (they are not the same number)
+--------------------------------------------------------------------------------
+
+One metric row = ONE RULE. Several rules commonly target the same element:
+`email` on B2B Customer carries Completeness, Validity and Uniqueness rules.
+So for any object,
+
+    checks run  >=  elements checked
+
+  "Elements Checked"  distinct data elements at least one rule covered
+  "checks run"        rules that executed - the row count of the table below
+
+B2B Customer has 5 data columns, 13 approved rules, and therefore reads
+5 elements / 13 checks. The drilldown table has 13 rows because it lists one
+row per CHECK - the same element appears once per dimension tested.
+
+A multi-field rule's label ("customer_name + sbg_id") is EXPANDED when
+counting: it covers two elements, not one column of that name. Any label that
+is not a declared column of the object - a rule-name fallback, for instance -
+is not counted as an element at all. See models.MULTI_FIELD_SEP /
+elements_in() and dashboard._covered_elements().
+
+  CDEs Checked    sum of distinct covered elements PER OBJECT, so sbg_id on
+                  Customer and sbg_id on Product are two different CDEs
+  Rule Coverage   CDEs Checked / total declared columns across the objects run
+                  (13 / 17 = 76.5% for run #4)
+
+Primary keys are NOT counted as elements. They are the record identifier, not
+a validated attribute, and rules cannot target them - staging keeps the key in
+`record_key` rather than as a data column.
+
+"Top Failing Data Elements" is aggregated PER ELEMENT, pooled the same way as
+every other score, with the worst severity among that element's failing rules.
+Emitting one row per metric listed the same element two or three times.
+
+--------------------------------------------------------------------------------
+ PART 5 - "94% BUT 38 FAILED?"  READING THE KPIs WITHOUT GETTING BURNED
+--------------------------------------------------------------------------------
+
+The cards sit next to each other and it is very natural to divide the wrong
+pair. Run #4:
+
+    Records Scanned          128     rows pulled from source
+    Critical Failed Checks    38     failed CHECKS, severity CRITICAL/ERROR
+    Overall DQ Score        93.1%
+
+    38 / 128 = 29.7%  ->  "so why is the score 93%?"
+
+Because 128 and 38 have NOTHING to do with each other. They are not a
+numerator and a denominator.
+
+    23 rules ran over those 128 rows
+    ------------------------------------------------------
+    890   CHECKS run          sum of records_checked
+     61   checks failed       all severities
+     38   of which blocking   CRITICAL + ERROR  <- the card
+    ------------------------------------------------------
+    DQ score = 829 / 890 = 93.1%
+
+One row is checked by many rules. A B2B Customer row passes through 13 of
+them, so 46 rows generate ~561 checks, not 46. The score's denominator is
+CHECKS, and it always will be - that is what makes dimensions comparable.
+
+ THE NUMBER PEOPLE ACTUALLY MEAN
+--------------------------------------------------------------------------------
+"How bad is my data" usually means RECORDS, not checks:
+
+    B2B Customer   21 of  46 rows have >=1 violation   45.7%
+    B2B Price      21 of  38                           55.3%
+    B2B Product    13 of  36                           36.1%
+    B2B SBG         1 of   8                           12.5%
+    ---------------------------------------------------------
+    TOTAL          56 of 128 rows affected             43.8%
+                   72 of 128 rows are completely clean 56.2%
+
+So both of these are true at once, and neither is wrong:
+
+    93.1% of individual checks passed
+    only 56.2% of records are completely clean
+
+BE READY FOR THIS QUESTION IN THE REVIEW. If someone says "93% sounds fine",
+the honest follow-up is "93% of checks - but 44% of records have at least one
+issue". A high check-pass rate with a low clean-record rate means the failures
+are SPREAD ACROSS many rows rather than concentrated in a few.
+
+`records_affected` is computed once per run in finish_run() and stored on
+val_runs, because the dashboard must never scan val_violations live.
+
+ WHAT THE CARDS NOW SAY
+--------------------------------------------------------------------------------
+Every card carries its own denominator so the wrong division is not available:
+
+    Overall DQ Score        93.1%   "829 of 890 checks passed"
+    Records Scanned           128   "4 objects - 56 affected"
+    Critical Failed Checks     38   "Critical + Error - of 890 checks"
+    Rule Coverage           76.5%   "13 CDEs have rules"

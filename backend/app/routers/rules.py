@@ -24,7 +24,6 @@ from sqlalchemy.orm import Session
 
 from ..database import get_config_db as get_db
 from ..models import ENTITIES, ValRule
-from ..models import ENTITIES, ValRule  # noqa: F811
 from ..rule_compiler import (
     RULE_TYPES, CompileContext, RuleCompileError, compile_rule, dimension_for,
     execution_type_for,
@@ -68,6 +67,14 @@ def require_role(role: str, minimum: str):
             f"This action requires the '{minimum}' role. You are signed in as "
             f"'{role or 'viewer'}'.",
         )
+
+
+# Dimension is NOT user input. It is fixed by rule_type in RULE_TYPE_META and
+# stamped on the rule here, so a rule can never be filed under a dimension that
+# contradicts what it actually checks -- a REFERENTIAL_INTEGRITY rule is always
+# Integrity, never whatever an author happened to pick from a dropdown.
+# To change the classification, edit RULE_TYPE_META and run
+# `python migrate_db.py --apply`, which re-stamps every existing rule.
 
 
 @router.get("", response_model=list)
@@ -124,6 +131,7 @@ def create_rule(payload: RuleCreate, db: Session = Depends(get_db)):
         field_name=payload.field_name,
         primary_key_field=meta["primary_key_field"],
         execution_type=execution_type_for(payload.rule_type),   # derived, never user input
+        dimension=dimension_for(payload.rule_type),      # derived, never user input
         rule_definition=definition_json,
         error_message=payload.error_message,
         severity=payload.severity,
@@ -284,6 +292,7 @@ def update_rule(rule_id: int, payload: RuleCreate, db: Session = Depends(get_db)
     rule.source_system = meta["source_system"]
     rule.primary_key_field = meta["primary_key_field"]
     rule.execution_type = execution_type_for(payload.rule_type)
+    rule.dimension = dimension_for(payload.rule_type)   # derived, never user input
     rule.status = "UPDATED" if rule.status == "APPROVED" else rule.status
     rule.approved_by = None if rule.status == "UPDATED" else rule.approved_by
     rule.approved_date = None if rule.status == "UPDATED" else rule.approved_date

@@ -63,6 +63,7 @@ export interface Rule {
   rule_name: string;
   source_system: string;
   rule_type: string;
+  dimension: string | null;
   entity_name: string;
   field_name: string;
   primary_key_field: string;
@@ -114,7 +115,10 @@ export interface Kpis {
   objects_checked: number;
   cdes_checked: number;
   records_scanned: number;
+  records_affected: number;   // rows with >=1 violation
   critical_failed_checks: number;
+  checks_run: number;         // the DQ score's denominator
+  checks_failed: number;
   rule_coverage_pct: number;
 }
 
@@ -163,7 +167,8 @@ export interface Drilldown {
   object_id: string;
   object_name: string;
   overall_score: number;
-  elements_checked: number;
+  elements_checked: number;   // distinct elements covered
+  checks_run: number;         // rules executed -- several can hit one element
   records_scanned: number;
   dimension_scores: Record<string, number>;
   elements: DrilldownElement[];
@@ -250,9 +255,19 @@ export const api = {
   runFromDb: (body: any) => post<Batch>("/api/runs/db-fetch", { ...body, role: getRole() }),
 };
 
+/**
+ * The six quality dimensions, in heatmap column order. Must stay identical to
+ * DIMENSIONS in backend/app/rule_compiler.py -- a name here that the engine
+ * never emits becomes a column of permanent dashes, and one the engine emits
+ * that is missing here silently hides real failures from the heatmap.
+ */
 export const DIMENSION_ORDER = [
-  "Completeness", "Validity", "Format", "Uniqueness", "Ref Integrity", "Relationship",
+  "Completeness", "Validity", "Uniqueness", "Consistency", "Integrity", "Accuracy",
 ];
+
+// No DIMENSION_FOR_TYPE map here on purpose. Dimension is decided by the
+// backend from rule_type and returned on the rule, so the frontend never has a
+// second copy of the classification that could drift out of step.
 
 export function ragClass(score: number): "good" | "warn" | "crit" {
   if (score > 90) return "good";

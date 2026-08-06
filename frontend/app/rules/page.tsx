@@ -442,7 +442,7 @@ export default function RulesPage() {
             <thead>
               <tr>
                 <th>ID</th><th>Rule Name</th><th>Object</th><th>Element</th>
-                <th>Type</th><th>Severity</th><th>Status</th><th className="th-acts" />
+                <th>Type</th><th>Dimension</th><th>Severity</th><th>Status</th><th className="th-acts" />
               </tr>
             </thead>
             <tbody>
@@ -458,6 +458,7 @@ export default function RulesPage() {
                   <td>{r.entity_name}</td>
                   <td>{r.field_name || <span className="tag-multi">multi-element</span>}</td>
                   <td className="mini">{r.rule_type.replace(/_/g, " ")}</td>
+                  <td className="mini">{r.dimension || "—"}</td>
                   <td><span className={`badge ${sevBadge(r.severity)}`}>{r.severity}</span></td>
                   <td><span className={`badge ${statusBadge(r.status)}`}>{r.status}</span></td>
                   <td className="acts-end">

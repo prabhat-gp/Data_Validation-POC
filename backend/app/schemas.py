@@ -46,6 +46,7 @@ class RuleOut(BaseModel):
     field_name: str
     primary_key_field: str
     execution_type: str
+    dimension: Optional[str]
     rule_definition: Optional[str]
     error_message: Optional[str]
     severity: str

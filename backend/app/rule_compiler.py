@@ -432,16 +432,49 @@ RULE_TYPES = list(_COMPILERS.keys())
 
 # rule_type -> (dashboard dimension, execution_type).
 # execution_type is QUERY for every type -- matching the reference workbook.
+# The six quality dimensions the dashboard reports on. This list is the single
+# source of truth -- the heatmap columns, the rule form dropdown and the
+# lookup table are all driven from it, so a dimension can never again exist in
+# one place and not the other.
+#
+# Deliberately NOT included: Timeliness. No rule type measures freshness (no
+# as-of date, no SLA), so a Timeliness column would be permanently empty --
+# which is the exact bug the old "Format" and "Relationship" columns were.
+# Adding it means adding a rule type first.
+DIMENSIONS = [
+    "Completeness",   # is the value there
+    "Validity",       # does it conform to a defined format or domain
+    "Uniqueness",     # is it recorded exactly once
+    "Consistency",    # do fields agree with each other
+    "Integrity",      # does the reference resolve
+    "Accuracy",       # is the value plausible against reality
+]
+
+# DEFAULT dimension per rule type. It is only a default: dimension is stored on
+# val_rules and the author can override it, because the same rule type serves
+# different dimensions depending on intent --
+#   RANGE on discount_pct 0-100      -> Validity  (a percent above 100 is invalid)
+#   RANGE on price_amount 0-100000   -> Accuracy  (100001 is legal, just implausible)
+#   AGGREGATION "customers per SBG"  -> Accuracy  (reasonableness)
+#   AGGREGATION "one price per part" -> Uniqueness (group-level duplicate)
 RULE_TYPE_META = {
-    "COMPLETENESS":          ("Completeness",  "QUERY"),
-    "VALIDITY":              ("Validity",      "QUERY"),
-    "RANGE":                 ("Validity",      "QUERY"),
-    "UNIQUENESS":            ("Uniqueness",    "QUERY"),
-    "REFERENTIAL_INTEGRITY": ("Ref Integrity", "QUERY"),
-    "AGGREGATION":           ("Consistency",   "QUERY"),
-    "ALLOWED_VALUES":        ("Validity",      "QUERY"),
-    "CROSS_FIELD_SIMPLE":    ("Consistency",   "QUERY"),
-    "CUSTOM_SQL":            ("Consistency",   "QUERY"),
+    "COMPLETENESS":          ("Completeness", "QUERY"),
+    "VALIDITY":              ("Validity",     "QUERY"),
+    "RANGE":                 ("Validity",     "QUERY"),
+    "ALLOWED_VALUES":        ("Validity",     "QUERY"),
+    "UNIQUENESS":            ("Uniqueness",   "QUERY"),
+    "CROSS_FIELD_SIMPLE":    ("Consistency",  "QUERY"),
+    "CUSTOM_SQL":            ("Consistency",  "QUERY"),
+    "REFERENTIAL_INTEGRITY": ("Integrity",    "QUERY"),
+    "AGGREGATION":           ("Accuracy",     "QUERY"),
+}
+
+# Labels retired in the dimension rework, kept only so historical val_metrics
+# rows can be re-pointed. See migrate_db.py.
+RETIRED_DIMENSIONS = {
+    "Ref Integrity": "Integrity",
+    "Relationship":  "Integrity",
+    "Format":        "Validity",
 }
 
 RULE_TYPE_DESCRIPTIONS = {
