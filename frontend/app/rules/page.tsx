@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import {
   Entity, Role, Rule, RuleType, SEVERITIES, STATUSES, api, getActor, getRole,
 } from "@/lib/api";
+import RuleDetail, { sevBadge, statusBadge } from "@/app/components/RuleDetail";
 
 /** Plain-English guide + the SQL each type becomes, shown for the current selection only. */
 const GUIDE: Record<string, { plain: string; example: string; sql: string }> = {
@@ -507,78 +508,9 @@ export default function RulesPage() {
           </ul>
         </section>
 
-        {detail && <RuleModal rule={detail} onClose={() => setDetail(null)} />}
+        {detail && <RuleDetail rule={detail} onClose={() => setDetail(null)} />}
       </div>
     </>
-  );
-}
-
-/**
- * Full rule detail. A single row cannot show a multi-field UNIQUENESS or an
- * AGGREGATION config, so the whole definition is rendered here -- decoded into
- * plain language, with the raw JSON underneath for anyone who wants it.
- */
-function RuleModal({ rule, onClose }: { rule: Rule; onClose: () => void }) {
-  let d: any = {};
-  try { d = JSON.parse(rule.rule_definition || "{}"); } catch {}
-
-  const rows: [string, any][] = [];
-  const t = rule.rule_type;
-  if (t === "VALIDITY") rows.push(["Pattern", <code key="p">{d.pattern}</code>]);
-  if (t === "RANGE") {
-    rows.push(["Allowed range", `${d.min ?? "−∞"} to ${d.max ?? "∞"}`]);
-    rows.push(["Non-numeric", d.onNonNumeric === "flag" ? "flagged as a violation" : "skipped"]);
-  }
-  if (t === "UNIQUENESS")
-    rows.push(["Unique on", (d.fields?.length ? d.fields : [rule.field_name]).join("  +  ")]);
-  if (t === "REFERENTIAL_INTEGRITY")
-    rows.push(["Must exist in", `${d.lookupTable} . ${d.lookupField}`]);
-  if (t === "AGGREGATION") {
-    rows.push(["Measure", `${d.aggregateFunction}(${d.aggregateField})`]);
-    rows.push(["Grouped by", (d.groupBy || []).join("  +  ")]);
-    rows.push(["Flags when", `${d.aggregateFunction} ${d.operator} ${d.threshold}`]);
-  }
-  if (t === "ALLOWED_VALUES") rows.push(["Allowed", (d.allowedValues || []).join(", ")]);
-  if (t === "CROSS_FIELD_SIMPLE" || t === "CUSTOM_SQL")
-    rows.push(["Expression", <code key="e">{d.expression}</code>]);
-  if (d.filter?.conditions?.length)
-    rows.push(["Only where",
-      d.filter.conditions.map((c: any) => `${c.field} ${c.operator} ${c.value ?? ""}`)
-        .join(`  ${d.filter.logic}  `)]);
-
-  return (
-    <div className="modal-scrim" onClick={onClose}>
-      <div className="rulecard" onClick={(e) => e.stopPropagation()}>
-      <div className="rc-head">
-        <span className="rc-id">#{rule.rule_id}</span>
-        <b>{rule.rule_name}</b>
-        <span className={`badge ${statusBadge(rule.status)}`}>{rule.status}</span>
-        <span className={`badge ${sevBadge(rule.severity)}`}>{rule.severity}</span>
-        <button className="rc-x" onClick={onClose} title="Close">×</button>
-      </div>
-
-      <div className="rc-grid">
-        <span>Entity</span><b>{rule.entity_name}</b>
-        <span>Field</span><b>{rule.field_name || "— multi-field —"}</b>
-        <span>Type</span><b>{rule.rule_type.replace(/_/g, " ")}</b>
-        <span>Key</span><b>{rule.primary_key_field}</b>
-        {rows.map(([k, v], i) => (
-          <React.Fragment key={i}><span>{k}</span><b>{v}</b></React.Fragment>
-        ))}
-      </div>
-
-      <div className="rc-foot">
-        <div>Created by <b>{rule.created_by}</b> · {new Date(rule.created_date).toLocaleDateString()}</div>
-        {rule.approved_by && <div>Approved by <b>{rule.approved_by}</b></div>}
-        {rule.error_message && <div>Message: “{rule.error_message}”</div>}
-      </div>
-
-      <details className="rc-json">
-        <summary>Raw definition</summary>
-        <pre>{JSON.stringify(d, null, 2)}</pre>
-      </details>
-      </div>
-    </div>
   );
 }
 
@@ -616,12 +548,3 @@ function ChipPick({ options, value, onChange }: any) {
   );
 }
 
-function sevBadge(s: string) {
-  return ({ CRITICAL: "b-crit", ERROR: "b-crit", WARNING: "b-warn", INFO: "b-acc" } as any)[s] || "b-acc";
-}
-function statusBadge(s: string) {
-  return ({
-    APPROVED: "b-good", PENDING: "b-warn", DRAFT: "b-acc",
-    UPDATED: "b-violet", RETIRED: "b-crit",
-  } as any)[s] || "b-acc";
-}

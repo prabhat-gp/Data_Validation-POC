@@ -97,6 +97,10 @@ class RunOut(BaseModel):
     started_at: datetime
     finished_at: Optional[datetime]
     records_scanned: int
+    total_records: Optional[int] = None
+    phase: Optional[str] = None
+    rules_total: int = 0
+    rules_done: int = 0
     rules_executed: int
     source_file_name: Optional[str]
     error_message: Optional[str]

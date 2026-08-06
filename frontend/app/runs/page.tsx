@@ -36,7 +36,7 @@ export default function RunsPage() {
       // keep polling only while something is actually running
       const running = b.some((x) => x.status === "running");
       clearInterval(pollRef.current);
-      if (running) pollRef.current = setInterval(() => api.batches().then(setBatches).catch(() => {}), 2500);
+      if (running) pollRef.current = setInterval(() => api.batches().then(setBatches).catch(() => {}), 1200);
     }).catch(() => {});
   }
 
@@ -61,7 +61,7 @@ export default function RunsPage() {
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
       const b = await res.json();
       setNotice(`Started Run #${b.batch_id} across ${b.entity_count} entit${b.entity_count === 1 ? "y" : "ies"}.`);
-      setTimeout(refresh, 800);
+      refresh();
     } catch (e: any) { setError(String(e.message || e)); }
     finally { setBusy(false); }
   }
@@ -77,7 +77,10 @@ export default function RunsPage() {
         triggered_by: "prabhat",
       });
       setNotice(`Started Run #${b.batch_id} across ${b.entity_count} entit${b.entity_count === 1 ? "y" : "ies"}.`);
-      setTimeout(refresh, 800);
+      // show the batch (and its progress bars) straight away, then poll
+      setBatches((prev) => [b, ...prev.filter((x) => x.batch_id !== b.batch_id)]);
+      setOpen((o) => ({ ...o, [b.batch_id]: true }));
+      refresh();
     } catch (e: any) { setError(String(e.message || e)); }
     finally { setBusy(false); }
   }
@@ -214,23 +217,40 @@ export default function RunsPage() {
                   {open[b.batch_id] ? "Hide" : "Show more"}
                 </button>
               </div>
-              {b.status === "running" && (() => {
-                const done = b.runs.filter((r) => r.status === "completed" || r.status === "failed").length;
-                const active = b.runs.find((r) => r.status === "running");
-                return (
-                  <div className="bprog">
-                    <div className="track">
-                      <div className="fill" style={{ width: `${(done / b.runs.length) * 100}%` }} />
-                    </div>
-                    <div className="cap">
-                      <span className="now">
-                        {active ? `Validating ${active.entity_name}…` : "Starting…"}
-                      </span>
-                      <span>{done} of {b.runs.length} complete</span>
-                    </div>
-                  </div>
-                );
-              })()}
+              {(b.status === "running" || b.runs.some((r) => r.phase && r.phase !== "done")) && (
+                <div className="prog-list">
+                  {b.runs.map((r) => {
+                    // staging is measured in rows, validating in rules -- show
+                    // whichever phase this entity is actually in.
+                    const staged = r.total_records
+                      ? Math.min(100, Math.round((r.records_scanned / r.total_records) * 100))
+                      : 0;
+                    const validated = r.rules_total
+                      ? Math.round((r.rules_done / r.rules_total) * 100)
+                      : 0;
+                    const done = r.status === "completed" || r.status === "failed";
+                    const pct = done ? 100 : r.phase === "validating" ? validated : staged;
+                    const label = done
+                      ? (r.status === "failed" ? "failed" : "done")
+                      : r.phase === "validating"
+                        ? `validating · ${r.rules_done}/${r.rules_total} rules`
+                        : r.phase === "staging"
+                          ? `loading · ${r.records_scanned.toLocaleString()}${r.total_records ? " / " + r.total_records.toLocaleString() : ""} rows`
+                          : "queued";
+                    return (
+                      <div key={r.run_id} className="prog-row">
+                        <span className="pr-ent">{r.entity_name}</span>
+                        <div className="pr-track">
+                          <div className={`pr-fill${done ? (r.status === "failed" ? " bad" : " ok") : ""}`}
+                               style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="pr-pct">{pct}%</span>
+                        <span className="pr-lab">{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {open[b.batch_id] && b.runs.map((r) => (
                 <div key={r.run_id} className="brow">
                   <span className="ent">{r.entity_name}</span>

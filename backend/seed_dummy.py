@@ -75,13 +75,16 @@ DEMO = {
     },
 }
 
-# (run_type, failure multiplier) -- quality improves over the three runs
+# Exactly three demo batches, one per non-MySQL source, in a fixed order:
+#   batch 1 = Hybris, batch 2 = SFDC, batch 3 = File Dump
+# MySQL is deliberately left empty -- it fills from batch 4 onward when the
+# user runs a real validation.
+# (source_system, run_type, failure multiplier)
 BATCHES = [
-    ("db_fetch",    1.85),
-    ("db_fetch",    1.35),
-    ("db_fetch",    1.00),
+    ("Hybris",    "db_fetch",    1.85),
+    ("SFDC",      "db_fetch",    1.35),
+    ("File Dump", "file_upload", 1.00),
 ]
-DEMO_SOURCE = "Hybris"     # the seeded dashboard data represents Hybris
 
 
 def reset(db: Session):
@@ -96,10 +99,10 @@ def reset(db: Session):
 def seed(db: Session):
     base = utcnow() - timedelta(days=2)
 
-    for i, (run_type, multiplier) in enumerate(BATCHES, start=1):
+    for i, (src, run_type, multiplier) in enumerate(BATCHES, start=1):
         batch = ValBatch(
             batch_name=f"Run #{i}",
-            run_type=run_type, source_system=DEMO_SOURCE,
+            run_type=run_type, source_system=src,
             triggered_by="demo_seed",
             started_at=base + timedelta(hours=i * 6),
         )
@@ -110,7 +113,7 @@ def seed(db: Session):
             run = ValRun(
                 batch_id=batch.batch_id,
                 entity_name=entity,
-                run_type=run_type, source_system=DEMO_SOURCE,
+                run_type=run_type, source_system=src,
                 status="completed",
                 started_at=base + timedelta(hours=i * 6),
                 finished_at=base + timedelta(hours=i * 6, minutes=8),
@@ -135,7 +138,7 @@ def seed(db: Session):
                     score_pct=round((checked - scaled) / checked * 100, 2),
                 ))
         db.commit()
-        print(f"  Run #{i}  {run_type:<12} {len(DEMO)} entities")
+        print(f"  Run #{i}  {src:<10} {run_type:<12} {len(DEMO)} entities")
 
 
 def main():
@@ -146,10 +149,11 @@ def main():
             print("Runs already exist -- pass --reset to reseed.")
             return
         seed(db)
-        n_db = sum(1 for t, _ in BATCHES if t == "db_fetch")
-        n_up = sum(1 for t, _ in BATCHES if t == "file_upload")
         print(f"\n{db.query(ValRun).count()} runs, {db.query(ValMetric).count()} metrics.")
-        print(f"{n_db} database batches, {n_up} file-upload batch. val_rules created: 0.")
+        for i, (src, _, _) in enumerate(BATCHES, start=1):
+            print(f"  batch {i} -> {src}")
+        print("  MySQL: empty on purpose; user runs start at batch 4.")
+        print("val_rules created: 0.")
 
 
 if __name__ == "__main__":

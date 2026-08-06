@@ -28,14 +28,18 @@ BLOCKING = {"CRITICAL", "ERROR"}
 NON_BLOCKING = {"WARNING", "INFO"}
 
 
-def _latest_completed_run(db: Session, entity_name: Optional[str] = None) -> Optional[ValRun]:
+def _latest_completed_run(db: Session, entity_name: Optional[str] = None,
+                          source_system: Optional[str] = None) -> Optional[ValRun]:
     q = db.query(ValRun).filter(ValRun.status == "completed")
     if entity_name is not None:
         q = q.filter(ValRun.entity_name == entity_name)
+    if source_system:
+        q = q.filter(ValRun.source_system == source_system)
     return q.order_by(ValRun.finished_at.desc()).first()
 
 
-def _current_state(db: Session, batch_id: Optional[int] = None):
+def _current_state(db: Session, batch_id: Optional[int] = None,
+                   source_system: Optional[str] = None):
     """
     Latest completed run PER ENTITY + that run's metrics.
 
@@ -52,6 +56,10 @@ def _current_state(db: Session, batch_id: Optional[int] = None):
     q = db.query(ValRun).filter(ValRun.status == "completed")
     if batch_id is not None:
         q = q.filter(ValRun.batch_id == batch_id)
+    if source_system:
+        # without this the heatmap mixes entities from every source, because
+        # "latest completed run per entity" spans all of them
+        q = q.filter(ValRun.source_system == source_system)
     runs = q.order_by(ValRun.finished_at.desc()).all()
     latest = {}
     for r in runs:
@@ -71,8 +79,8 @@ def _current_state(db: Session, batch_id: Optional[int] = None):
 
 
 @router.get("/kpis")
-def kpis(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
-    state = _current_state(db, batch_id)
+def kpis(batch_id: Optional[int] = None, source_system: Optional[str] = None, db: Session = Depends(get_db)):
+    state = _current_state(db, batch_id, source_system)
     if not state:
         raise HTTPException(404, "no completed runs found for any entity")
 
@@ -94,16 +102,18 @@ def kpis(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
     return {
         "overall_dq_score": overall,
         "objects_checked": len(state),
-        "critical_failed_checks": critical_failed,
+        # distinct CDEs that actually had a rule run against them
+        "cdes_checked": covered_fields,
         "records_scanned": sum(s["run"].records_scanned or 0 for s in state),
+        "critical_failed_checks": critical_failed,
         "rule_coverage_pct": min(coverage, 100.0),
     }
 
 
 @router.get("/heatmap")
-def heatmap(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+def heatmap(batch_id: Optional[int] = None, source_system: Optional[str] = None, db: Session = Depends(get_db)):
     rows = []
-    for s in _current_state(db, batch_id):
+    for s in _current_state(db, batch_id, source_system):
         by_dim = {}
         for m in s["metrics"]:
             d = by_dim.setdefault(m.dimension, {"checked": 0, "failed": 0})
@@ -126,9 +136,9 @@ def heatmap(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
 
 
 @router.get("/top-failing")
-def top_failing(limit: int = 5, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+def top_failing(limit: int = 5, batch_id: Optional[int] = None, source_system: Optional[str] = None, db: Session = Depends(get_db)):
     items = []
-    for s in _current_state(db, batch_id):
+    for s in _current_state(db, batch_id, source_system):
         for m in s["metrics"]:
             if m.records_failed > 0:
                 items.append({
@@ -143,7 +153,7 @@ def top_failing(limit: int = 5, batch_id: Optional[int] = None, db: Session = De
 
 
 @router.get("/trend")
-def trend(limit: int = 10, db: Session = Depends(get_db)):
+def trend(limit: int = 10, source_system: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Grouped by BATCH, not by a run_name string.
 
@@ -152,12 +162,10 @@ def trend(limit: int = 10, db: Session = Depends(get_db)):
     quality did. entity_count is returned so the UI can show that rather than
     implying a trend that isn't there.
     """
-    runs = (
-        db.query(ValRun)
-        .filter(ValRun.status == "completed")
-        .order_by(ValRun.batch_id.desc())
-        .all()
-    )
+    tq = db.query(ValRun).filter(ValRun.status == "completed")
+    if source_system:
+        tq = tq.filter(ValRun.source_system == source_system)
+    runs = tq.order_by(ValRun.batch_id.desc()).all()
     if not runs:
         return []
 
@@ -191,9 +199,9 @@ def trend(limit: int = 10, db: Session = Depends(get_db)):
 
 
 @router.get("/fix-profile")
-def fix_profile(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+def fix_profile(batch_id: Optional[int] = None, source_system: Optional[str] = None, db: Session = Depends(get_db)):
     """Critical vs Warning split -- the only classification V1 actually captures."""
-    all_metrics = [m for s in _current_state(db, batch_id) for m in s["metrics"]]
+    all_metrics = [m for s in _current_state(db, batch_id, source_system) for m in s["metrics"]]
     counts = {}
     for m in all_metrics:
         counts[m.severity] = counts.get(m.severity, 0) + m.records_failed
@@ -209,9 +217,9 @@ def fix_profile(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
 
 
 @router.get("/critical-by-dimension")
-def critical_by_dimension(batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+def critical_by_dimension(batch_id: Optional[int] = None, source_system: Optional[str] = None, db: Session = Depends(get_db)):
     by_dim = {}
-    for s in _current_state(db, batch_id):
+    for s in _current_state(db, batch_id, source_system):
         for m in s["metrics"]:
             if m.severity in BLOCKING:
                 by_dim[m.dimension] = by_dim.get(m.dimension, 0) + m.records_failed
@@ -226,12 +234,13 @@ def critical_by_dimension(batch_id: Optional[int] = None, db: Session = Depends(
 
 
 @router.get("/object/{entity_name}/drilldown")
-def entity_drilldown(entity_name: str, run_id: Optional[int] = None, db: Session = Depends(get_db)):
+def entity_drilldown(entity_name: str, run_id: Optional[int] = None,
+                     source_system: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Single-entity detail. Note there is NO join to val_rules -- field_name and
     dimension come straight off val_metrics.
     """
-    run = db.get(ValRun, run_id) if run_id else _latest_completed_run(db, entity_name)
+    run = db.get(ValRun, run_id) if run_id else _latest_completed_run(db, entity_name, source_system)
     if run is None:
         raise HTTPException(404, "no completed run found for this entity")
 
@@ -265,7 +274,10 @@ def entity_drilldown(entity_name: str, run_id: Optional[int] = None, db: Session
             {
                 "element_name": m.field_name, "dimension": m.dimension,
                 "score_pct": m.score_pct, "records_failed": m.records_failed,
+                "records_checked": m.records_checked,
                 "severity": m.severity,
+                # lets the UI open the exact rule behind this number
+                "rule_id": m.rule_id,
             }
             for m in metrics
         ],
@@ -303,7 +315,8 @@ def batch_options(run_type: Optional[str] = None, source_system: Optional[str] =
 
 
 @router.get("/summary")
-def summary(top_limit: int = 5, batch_id: Optional[int] = None, db: Session = Depends(get_db)):
+def summary(top_limit: int = 5, batch_id: Optional[int] = None,
+            source_system: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Everything the overview page needs, in ONE request.
 
@@ -311,13 +324,13 @@ def summary(top_limit: int = 5, batch_id: Optional[int] = None, db: Session = De
     show change over time; scoping it to a single batch would leave one point
     and destroy the thing it is for. Everything else respects the filter.
     """
-    if not _current_state(db, batch_id):
+    if not _current_state(db, batch_id, source_system):
         raise HTTPException(404, "no completed runs found for this selection")
     return {
-        "kpis": kpis(batch_id, db),
-        "heatmap": heatmap(batch_id, db),
-        "top_failing": top_failing(top_limit, batch_id, db),
-        "trend": trend(10, db),          # always full history -- see docstring
-        "fix_profile": fix_profile(batch_id, db),
-        "critical_by_dimension": critical_by_dimension(batch_id, db),
+        "kpis": kpis(batch_id, source_system, db),
+        "heatmap": heatmap(batch_id, source_system, db),
+        "top_failing": top_failing(top_limit, batch_id, source_system, db),
+        "trend": trend(10, source_system, db),   # history for THIS source
+        "fix_profile": fix_profile(batch_id, source_system, db),
+        "critical_by_dimension": critical_by_dimension(batch_id, source_system, db),
     }

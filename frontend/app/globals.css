@@ -131,6 +131,7 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 /* ---------------- KPI cards ---------------- */
 .kpis { display: grid; gap: 12px; margin-bottom: 14px; }
 .k5 { grid-template-columns: repeat(5, 1fr); }
+.k6 { grid-template-columns: repeat(6, 1fr); }
 .k-gauge5 { grid-template-columns: 1.15fr 1fr 1fr 1fr 1fr; }
 .k-gauge4 { grid-template-columns: 1.15fr 1fr 1fr 1fr; }
 .k4 { grid-template-columns: repeat(4, 1fr); }
@@ -142,9 +143,9 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 .kpi:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
 .kpi:not(.kpi-gauge) { justify-content: center; }
 .kpi { display: flex; flex-direction: column; }
-.kpi .lab { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin-bottom: 8px; }
-.kpi .val { font-size: 25px; font-weight: 800; letter-spacing: -.025em; line-height: 1; }
-.kpi .sub { font-size: 10.5px; color: var(--ink-faint); margin-top: 6px; }
+.kpi .lab { font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin-bottom: 8px; }
+.kpi .val { font-size: 27px; font-weight: 800; letter-spacing: -.025em; line-height: 1; }
+.kpi .sub { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
 .kpi .strip { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .s-good { background: var(--good); } .s-warn { background: var(--warn); }
 .s-crit { background: var(--crit); } .s-acc { background: var(--accent); }
@@ -286,7 +287,7 @@ table.heat td.cell {
   .nav { flex-direction: row; margin: 0; }
   .nav-label, .side-foot .health { display: none; }
   .side-foot { border: none; padding: 0; margin-left: auto; }
-  .k5, .k4, .k-gauge5, .k-gauge4 { grid-template-columns: repeat(2, 1fr); }
+  .k5, .k6, .k4, .k-gauge5, .k-gauge4 { grid-template-columns: repeat(2, 1fr); }
   .row { grid-template-columns: 1fr !important; }
   .guide-row { grid-template-columns: 1fr; gap: 3px; }
 }
@@ -616,3 +617,50 @@ th.th-acts { width: 44px; }
   background: var(--panel); color: var(--ink); font-family: inherit;
 }
 .brand .bt { font-size: 13.5px; font-weight: 750; line-height: 1.25; }
+
+/* per-entity run progress */
+.prog-list { display: flex; flex-direction: column; gap: 7px; margin: 10px 0 4px; }
+.prog-row { display: grid; grid-template-columns: 120px 1fr 42px auto; gap: 10px; align-items: center; }
+.pr-ent { font-size: 12px; font-weight: 650; }
+.pr-track { height: 7px; border-radius: 20px; background: var(--panel-2);
+  border: 1px solid var(--line-soft); overflow: hidden; }
+.pr-fill { height: 100%; background: var(--accent); transition: width .35s ease; }
+.pr-fill.ok { background: var(--good); }
+.pr-fill.bad { background: var(--crit); }
+.pr-pct { font-size: 11px; font-weight: 700; font-family: ui-monospace, monospace;
+  text-align: right; color: var(--ink-soft); }
+.pr-lab { font-size: 10.5px; color: var(--ink-faint); white-space: nowrap; }
+
+/* "in this run" block inside the rule modal */
+.rc-result { background: var(--panel-2); border: 1px solid var(--line-soft);
+  border-radius: 10px; padding: 11px 13px; margin-bottom: 14px; }
+.rcr-head { font-size: 9.5px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--ink-faint); margin-bottom: 8px; }
+.rcr-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.rcr-stats > div { display: flex; flex-direction: column; }
+.rcr-stats .v { font-size: 17px; font-weight: 800; font-family: ui-monospace, monospace; }
+.rcr-stats .l { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--ink-faint); margin-top: 2px; }
+
+/* six KPI cards across -- tighten so labels and values do not wrap */
+.k6 .kpi { padding: 13px 12px; min-width: 0; }
+.k6 .kpi .lab, .k6 .kpi .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.k6 .kpi .lab { font-size: 10.5px; letter-spacing: .03em; }
+.k6 .kpi .val { font-size: 25px; }
+.k6 .kpi .sub { font-size: 11px; }
+/* six across down to ~1200px; below that fall to 3, then 2 */
+@media (max-width: 1200px) { .k6 { grid-template-columns: repeat(3, 1fr); } }
+
+/* ---------------- drilldown breadcrumb bar ---------------- */
+.crumbbar { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
+/* the object picker sits hard right so switching object is one click, not a
+   trip back to the overview and in again */
+.crumbjump { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.crumbjump .fl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--ink-faint); font-weight: 700; }
+.crumbjump select {
+  font-size: 12.5px; font-weight: 700; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 11px; cursor: pointer;
+}
+.crumbjump select:hover { border-color: var(--accent); }
+.crumbjump select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }

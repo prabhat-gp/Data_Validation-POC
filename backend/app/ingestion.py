@@ -99,7 +99,8 @@ def _entity_meta(entity_name: str) -> dict:
     return meta
 
 
-def stage_from_csv(db: Session, run_id: int, entity_name: str, file_path: str) -> int:
+def stage_from_csv(db: Session, run_id: int, entity_name: str, file_path: str,
+                   on_progress=None, on_total=None) -> int:
     """
     Streams a CSV into the entity's staging table. Extra columns in the file
     are ignored; missing required columns fail fast with an explicit message
@@ -108,6 +109,11 @@ def stage_from_csv(db: Session, run_id: int, entity_name: str, file_path: str) -
     meta = _entity_meta(entity_name)
     columns = meta["columns"]
     key_col = meta["primary_key_field"]
+
+    # cheap pre-count so the UI can show a real percentage rather than a spinner
+    if on_total:
+        with open(file_path, "rb") as fh:
+            on_total(max(sum(1 for _ in fh) - 1, 0))
 
     total, batch = 0, []
     with open(file_path, newline="", encoding="utf-8-sig") as f:
@@ -132,13 +138,16 @@ def stage_from_csv(db: Session, run_id: int, entity_name: str, file_path: str) -
             if len(batch) >= BATCH_SIZE:
                 _bulk_insert(db, entity_name, batch)
                 batch = []
+                if on_progress:
+                    on_progress(total)
 
     _bulk_insert(db, entity_name, batch)
     return total
 
 
 def stage_from_db(db: Session, run_id: int, entity_name: str,
-                  source_system: Optional[str] = None) -> int:
+                  source_system: Optional[str] = None,
+                  on_progress=None, on_total=None) -> int:
     """
     Pulls an entity straight from the configured source database.
 
@@ -167,6 +176,11 @@ def stage_from_db(db: Session, run_id: int, entity_name: str,
     src_engine = create_engine(url)
     total, batch = 0, []
     try:
+        # one cheap COUNT so progress is a real percentage, not a guess
+        if on_total:
+            with src_engine.connect() as cc:
+                on_total(cc.execute(
+                    text(f"SELECT COUNT(*) FROM {meta['source_object_name']}")).scalar() or 0)
         with src_engine.connect().execution_options(stream_results=True) as conn:
             result = conn.execute(text(query))
             result_cols = list(result.keys())
@@ -180,6 +194,8 @@ def stage_from_db(db: Session, run_id: int, entity_name: str,
                 if len(batch) >= BATCH_SIZE:
                     _bulk_insert(db, entity_name, batch)
                     batch = []
+                    if on_progress:
+                        on_progress(total)
         _bulk_insert(db, entity_name, batch)
     finally:
         src_engine.dispose()

@@ -145,6 +145,12 @@ def _get_rule(db: Session, rule_id: int) -> ValRule:
     return rule
 
 
+@router.get("/{rule_id}", response_model=RuleOut)
+def get_rule(rule_id: int, db: Session = Depends(get_db)):
+    """Single rule -- used by the dashboard drilldown to explain a score."""
+    return _get_rule(db, rule_id)
+
+
 @router.post("/{rule_id}/submit", response_model=RuleOut)
 def submit_rule(rule_id: int, payload: RuleTransition = RuleTransition(), db: Session = Depends(get_db)):
     require_role(payload.role, "owner")

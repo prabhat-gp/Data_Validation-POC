@@ -22,6 +22,7 @@ One commit per rule: if the process dies on rule 40 of 60, rules 1-39 are
 durable.
 """
 
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -34,6 +35,24 @@ from .models import ENTITIES, ValMetric, ValRule, ValRun, ValViolation, staging_
 from .rule_compiler import (
     CompileContext, RuleCompileError, compile_rule, dimension_for, referenced_entity,
 )
+
+
+def _display_field(rule) -> str:
+    """
+    What the drilldown shows in the Element column. A multi-field UNIQUENESS
+    rule has no single field_name, so fall back to the combination it checks
+    rather than rendering a bare dash.
+    """
+    if rule.field_name:
+        return rule.field_name
+    try:
+        cfg = json.loads(rule.rule_definition or "{}")
+    except Exception:  # noqa: BLE001
+        cfg = {}
+    for key in ("fields", "groupBy"):
+        if cfg.get(key):
+            return " + ".join(cfg[key])
+    return rule.rule_name or "-"
 
 VIOLATION_BATCH_SIZE = 5000
 
@@ -75,17 +94,33 @@ def stage_run(db: Session, run_id: int, source_kind: str, file_path: Optional[st
         raise ValueError(f"Unknown entity {entity!r}")
 
     run.status = "running"
+    run.phase = "staging"
     run.started_at = utcnow()          # when execution begins, not when queued
+    run.records_scanned = 0
     db.commit()
 
+    # progress callbacks -- committed as staging streams so the UI can poll a
+    # real percentage instead of showing an indeterminate spinner. One extra
+    # UPDATE per 5,000 rows is negligible next to the inserts themselves.
+    def set_total(n):
+        run.total_records = n
+        db.commit()
+
+    def bump(n):
+        run.records_scanned = n
+        db.commit()
+
     if source_kind == "file_upload":
-        n = ingestion.stage_from_csv(db, run_id, entity, file_path)
+        n = ingestion.stage_from_csv(db, run_id, entity, file_path,
+                                     on_progress=bump, on_total=set_total)
     elif source_kind == "db_fetch":
-        n = ingestion.stage_from_db(db, run_id, entity, run.source_system)
+        n = ingestion.stage_from_db(db, run_id, entity, run.source_system,
+                                    on_progress=bump, on_total=set_total)
     else:
         raise ValueError(f"Unknown source_kind: {source_kind}")
 
     run.records_scanned = n
+    run.total_records = n
     db.commit()
     return n
 
@@ -105,6 +140,9 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
 
     rules = rules_for_entity(db, entity, rule_ids)
     run.rules_executed = len(rules)
+    run.rules_total = len(rules)
+    run.rules_done = 0
+    run.phase = "validating"
     db.commit()
 
     for rule in rules:
@@ -123,7 +161,7 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
             # a broken rule must not take down the run -- record 0/0 and move on
             db.add(ValMetric(
                 run_id=run_id, rule_id=rule.rule_id, entity_name=entity,
-                field_name=rule.field_name or "-", dimension=dimension_for(rule.rule_type),
+                field_name=_display_field(rule), dimension=dimension_for(rule.rule_type),
                 severity=rule.severity, records_checked=scanned, records_failed=0,
                 score_pct=0.0,
             ))
@@ -144,11 +182,12 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
         score = 0.0 if checked == 0 else round((checked - failed) / checked * 100, 2)
         db.add(ValMetric(
             run_id=run_id, rule_id=rule.rule_id, entity_name=entity,
-            field_name=rule.field_name or "-", dimension=dimension_for(rule.rule_type),
+            field_name=_display_field(rule), dimension=dimension_for(rule.rule_type),
             severity=rule.severity, records_checked=checked, records_failed=failed,
             score_pct=score,
         ))
-        db.commit()      # one commit per rule
+        run.rules_done = (run.rules_done or 0) + 1
+        db.commit()      # one commit per rule, progress included
 
 
 def _execute(db: Session, run_id: int, rule: ValRule, compiled) -> int:
@@ -160,7 +199,7 @@ def _execute(db: Session, run_id: int, rule: ValRule, compiled) -> int:
             "run_id": run_id,
             "rule_id": rule.rule_id,
             "entity_name": rule.entity_name,
-            "field_name": rule.field_name or "-",
+            "field_name": _display_field(rule),
             "record_key": row.record_key,
             "current_value": row.current_value,
             "violation_reason": rule.error_message or _default_reason(rule.rule_type, rule.field_name),
@@ -199,6 +238,7 @@ def clear_run_staging(db: Session, run_id: int):
 
 def finish_run(db: Session, run_id: int, error: Optional[str] = None):
     run = db.get(ValRun, run_id)
+    run.phase = "done"
     run.status = "failed" if error else "completed"
     run.error_message = error[:2000] if error else None
     run.finished_at = utcnow()

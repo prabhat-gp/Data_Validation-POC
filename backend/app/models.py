@@ -210,6 +210,10 @@ class ValRun(ResultsBase):
     started_at = Column(DateTime, default=utcnow)
     finished_at = Column(DateTime)
     records_scanned = Column(Integer, default=0)
+    total_records = Column(Integer)          # expected row count, known before staging
+    phase = Column(String(20))               # staging | validating | done
+    rules_total = Column(Integer, default=0)
+    rules_done = Column(Integer, default=0)
     rules_executed = Column(Integer, default=0)
     source_file_name = Column(String(300))
     error_message = Column(Text)

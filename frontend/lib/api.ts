@@ -88,6 +88,10 @@ export interface Run {
   started_at: string;
   finished_at: string | null;
   records_scanned: number;
+  total_records: number | null;
+  phase: string | null;
+  rules_total: number;
+  rules_done: number;
   rules_executed: number;
   source_file_name: string | null;
   error_message: string | null;
@@ -108,8 +112,9 @@ export interface Batch {
 export interface Kpis {
   overall_dq_score: number | null;
   objects_checked: number;
-  critical_failed_checks: number;
+  cdes_checked: number;
   records_scanned: number;
+  critical_failed_checks: number;
   rule_coverage_pct: number;
 }
 
@@ -148,7 +153,9 @@ export interface DrilldownElement {
   dimension: string;
   score_pct: number;
   records_failed: number;
+  records_checked: number;
   severity: string;
+  rule_id: number;
 }
 
 export interface Drilldown {
@@ -208,19 +215,25 @@ export const STATUSES = ["DRAFT", "PENDING", "APPROVED", "REJECTED", "UPDATED", 
 
 export const api = {
   /** One round trip for the whole overview page. */
-  summary: (batchId?: number | null) =>
-    get<DashboardSummary>(`/api/dashboard/summary${batchId ? `?batch_id=${batchId}` : ""}`),
+  summary: (batchId?: number | null, sourceSystem?: string) => {
+    const q = new URLSearchParams();
+    if (batchId) q.set("batch_id", String(batchId));
+    if (sourceSystem) q.set("source_system", sourceSystem);
+    return get<DashboardSummary>(`/api/dashboard/summary${q.toString() ? "?" + q : ""}`);
+  },
   batchOptions: (sourceSystem?: string) =>
     get<BatchOption[]>(`/api/dashboard/batch-options${sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : ""}`),
   checkSource: (sourceSystem: string) =>
     get<SourceCheck>(`/api/runs/source/check?source_system=${encodeURIComponent(sourceSystem)}`),
-  drilldown: (entityName: string) =>
-    get<Drilldown>(`/api/dashboard/object/${encodeURIComponent(entityName)}/drilldown`),
+  drilldown: (entityName: string, sourceSystem?: string) =>
+    get<Drilldown>(`/api/dashboard/object/${encodeURIComponent(entityName)}/drilldown` +
+      (sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : "")),
 
   entities: () => get<Entity[]>("/api/entities"),
   ruleTypes: () => get<RuleType[]>("/api/entities/meta/rule-types"),
 
   rules: () => get<Rule[]>("/api/rules"),
+  rule: (ruleId: number) => get<Rule>(`/api/rules/${ruleId}`),
   createRule: (body: any) => post<Rule>("/api/rules", { ...body, role: getRole() }),
   transitionRule: (ruleId: number, action: "submit" | "approve" | "reject", actor: string) =>
     post<Rule>(`/api/rules/${ruleId}/${action}`, { actor, role: getRole() }),

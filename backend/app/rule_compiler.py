@@ -153,6 +153,31 @@ def _is_blank(col: str) -> str:
     return "({c} IS NULL OR TRIM({c}) = {e})".format(c=col, e=EMPTY)
 
 
+def _regex_sql(col: str, param: str) -> str:
+    """
+    Regex matching is the ONE genuinely dialect-specific piece of the engine.
+
+        SQLite    REGEXP(pattern, value)   -- custom function we register
+        MySQL     value REGEXP pattern     -- operator
+        Postgres  value ~ pattern          -- operator
+        Oracle    REGEXP_LIKE(value, pat)  -- function
+
+    Resolved from the live connection so the same rule works on every backend.
+    """
+    try:
+        from .database import results_engine
+        name = results_engine.dialect.name
+    except Exception:  # noqa: BLE001
+        name = "sqlite"
+    if name == "mysql":
+        return "{c} REGEXP :{p}".format(c=col, p=param)
+    if name in ("postgresql", "postgres"):
+        return "{c} ~ :{p}".format(c=col, p=param)
+    if name == "oracle":
+        return "REGEXP_LIKE({c}, :{p})".format(c=col, p=param)
+    return "REGEXP(:{p}, {c})".format(c=col, p=param)
+
+
 def _not_blank(col: str) -> str:
     return "{c} IS NOT NULL AND TRIM({c}) <> {e}".format(c=col, e=EMPTY)
 
@@ -192,7 +217,7 @@ def _c_validity(field, cfg, ctx: CompileContext) -> CompiledRule:
     f, fp = _compile_filter(cfg)
     return CompiledRule(
         sql=f"SELECT record_key, {col} AS current_value FROM {ctx.table} "
-            f"WHERE {_and('run_id = :run_id', f, _not_blank(col), f'NOT REGEXP(:pattern, {col})')}",
+            f"WHERE {_and('run_id = :run_id', f, _not_blank(col), 'NOT (' + _regex_sql(col, 'pattern') + ')')}",
         params={"pattern": pattern, **fp},
     )
 
@@ -214,7 +239,7 @@ def _c_range(field, cfg, ctx: CompileContext) -> CompiledRule:
     # actual numeric pattern so a range rule only judges numbers.
     #   onNonNumeric = "skip" (default) -> ignore; it is a VALIDITY problem
     #   onNonNumeric = "flag"           -> report it as a range violation
-    numeric = "REGEXP(:num_re, TRIM({c}))".format(c=col)
+    numeric = _regex_sql("TRIM({c})".format(c=col), "num_re")
     params["num_re"] = r"^-?[0-9]+(\.[0-9]+)?$"
     on_bad = str(cfg.get("onNonNumeric") or "skip").lower()
     if on_bad == "flag":
@@ -349,7 +374,7 @@ def _c_aggregation(field, cfg, ctx: CompileContext) -> CompiledRule:
         # group out of 101 records" is meaningless; "1 bad group out of 12
         # groups" is the honest number.
         denominator_sql=f"SELECT COUNT(*) FROM (SELECT 1 FROM {ctx.table} "
-                        f"WHERE {_and('run_id = :run_id', f)} GROUP BY {gcols})",
+                        f"WHERE {_and('run_id = :run_id', f)} GROUP BY {gcols}) AS g",
     )
 
 

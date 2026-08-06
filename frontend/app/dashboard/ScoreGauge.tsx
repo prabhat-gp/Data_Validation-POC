@@ -38,7 +38,7 @@ export default function ScoreGauge({
         <path d={`M ${sx} ${sy} A ${R} ${R} 0 0 1 ${ex} ${ey}`}
               fill="none" stroke="var(--warn)" strokeWidth="16" strokeLinecap="round" />
         {crit > 0.5 && (
-          <path d={`M ${sx} ${sy} A ${R} ${R} 0 ${crit > 50 ? 1 : 0} 1 ${mx.toFixed(2)} ${my.toFixed(2)}`}
+          <path d={`M ${sx} ${sy} A ${R} ${R} 0 0 1 ${mx.toFixed(2)} ${my.toFixed(2)}`}
                 fill="none" stroke="var(--crit)" strokeWidth="16" strokeLinecap="round" />
         )}
         <text x={CX} y="90" textAnchor="middle" fill="var(--crit)"

@@ -1,38 +1,45 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, BatchOption, Kpis, HeatmapRow, TopFailingItem, TrendPoint, FixProfile, CriticalByDimension, Drilldown } from "@/lib/api";
+import { Rule, api, BatchOption, Kpis, HeatmapRow, TopFailingItem, TrendPoint, FixProfile, CriticalByDimension, Drilldown, DrilldownElement } from "@/lib/api";
 import Heatmap from "./Heatmap";
 import DonutChart from "./DonutChart";
 import TrendChart from "./TrendChart";
 import ScoreGauge from "./ScoreGauge";
+import RuleDetail, { RuleRunResult } from "@/app/components/RuleDetail";
 
 export default function DashboardPage() {
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
-  const [source, setSource] = useState("Hybris");
+  const [source, setSource] = useState<string | null>(null);
   const [batchId, setBatchId] = useState<number | null>(null);
   const [batchOpts, setBatchOpts] = useState<BatchOption[]>([]);
+  // Objects in the current run, lifted out of the heatmap so the drilldown can
+  // offer a "jump to object" picker without going back to the overview -- and
+  // without a second request, since the overview already fetched this list.
+  const [objects, setObjects] = useState<ObjectOption[]>([]);
 
   // Run ID is meaningless without a source, so it stays disabled until one is
   // picked and then only offers batches from that source.
   // the Data Source picker now lives in the sidebar
   useEffect(() => {
-    const stored = localStorage.getItem("source");
-    if (stored) setSource(stored);
+    setSource(localStorage.getItem("source") || "Hybris");
     const onSrc = (e: any) => setSource(e.detail);
     window.addEventListener("dq-source", onSrc);
     return () => window.removeEventListener("dq-source", onSrc);
   }, []);
 
   useEffect(() => {
+    let stale = false;                       // set when `source` changes again
     if (!source) { setBatchOpts([]); setBatchId(null); return; }
     api.batchOptions(source)
       .then((opts) => {
+        if (stale) return;                   // a newer source won -- drop this
         setBatchOpts(opts);
         // land on the newest run rather than making the user pick one
         setBatchId(opts.length ? opts[0].batch_id : null);
       })
-      .catch(() => { setBatchOpts([]); setBatchId(null); });
+      .catch(() => { if (!stale) { setBatchOpts([]); setBatchId(null); } });
+    return () => { stale = true; };
   }, [source]);
 
   return (
@@ -41,7 +48,7 @@ export default function DashboardPage() {
         <div>
           <h1>Data Validation Dashboard</h1>
           <div className="sub">
-            {selectedObjectId ? "Object drilldown" : `${source} · all objects`}
+            {selectedObjectId ? "Object drilldown" : source ? `${source} · all objects` : ""}
           </div>
         </div>
         <div className="spacer" />
@@ -63,16 +70,22 @@ export default function DashboardPage() {
 
       <div className="content">
         {selectedObjectId == null ? (
-          <Overview onSelectObject={setSelectedObjectId} batchId={batchId} />
+          source && <Overview onSelectObject={setSelectedObjectId} onObjects={setObjects} batchId={batchId} source={source} />
         ) : (
-          <ObjectDrilldown objectId={selectedObjectId} onBack={() => setSelectedObjectId(null)} />
+          <ObjectDrilldown objectId={selectedObjectId} source={source || ""} objects={objects}
+                           onSelectObject={setSelectedObjectId} onBack={() => setSelectedObjectId(null)} />
         )}
       </div>
     </>
   );
 }
 
-function Overview({ onSelectObject, batchId }: { onSelectObject: (id: string) => void; batchId: number | null }) {
+interface ObjectOption { id: string; name: string }
+
+function Overview({ onSelectObject, onObjects, batchId, source }: {
+  onSelectObject: (id: string) => void; onObjects: (o: ObjectOption[]) => void;
+  batchId: number | null; source: string;
+}) {
   const [kpis, setKpis] = useState<Kpis | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapRow[]>([]);
   const [topFailing, setTopFailing] = useState<TopFailingItem[]>([]);
@@ -83,21 +96,27 @@ function Overview({ onSelectObject, batchId }: { onSelectObject: (id: string) =>
 
   useEffect(() => {
     // single request instead of six -- see /api/dashboard/summary
+    let stale = false;              // guards against an out-of-order response
     setKpis(null);
-    api.summary(batchId)
+    api.summary(batchId, source)
       .then((d) => {
+        if (stale) return;
+        setError(null);
         setKpis(d.kpis); setHeatmap(d.heatmap); setTopFailing(d.top_failing);
         setTrend(d.trend); setFixProfile(d.fix_profile); setCritByDim(d.critical_by_dimension);
+        onObjects(d.heatmap.map((h) => ({ id: h.object_id, name: h.object_name })));
       })
-      .catch((e) => setError(String(e.message || e)));
-  }, [batchId]);
+      .catch((e) => { if (!stale) setError(String(e.message || e)); });
+    return () => { stale = true; };
+  }, [batchId, source]);
 
   if (error) {
     return (
       <div className="card">
-        <h2>No completed runs yet</h2>
+        <h2>No completed runs for {source}</h2>
         <p className="mini">
-          Upload a file on the <b>Runs</b> page, or seed demo data with <code>python3 seed_dummy.py --reset</code>.
+          Go to <b>Runs</b> and validate some entities from this source, or pick a
+          different source in the sidebar.
         </p>
         <p className="mini" style={{ marginTop: 8, opacity: .7 }}>{error}</p>
       </div>
@@ -107,11 +126,12 @@ function Overview({ onSelectObject, batchId }: { onSelectObject: (id: string) =>
 
   return (
     <>
-      <div className="kpis k5">
+      <div className="kpis k6">
         <Kpi label="Overall DQ Score" value={`${kpis.overall_dq_score ?? "—"}%`} strip={ragStrip(kpis.overall_dq_score)} sub="weighted across all objects" />
-        <Kpi label="Objects Checked" value={kpis.objects_checked} strip="acc" sub="critical data objects" />
-        <Kpi label="Critical Failed Checks" value={fmt(kpis.critical_failed_checks)} strip="crit" sub="severity = Critical" />
-        <Kpi label="Records Scanned" value={fmt(kpis.records_scanned)} strip="acc" sub={`${kpis.objects_checked} objects`} />
+        <Kpi label="Objects Checked" value={kpis.objects_checked} strip="acc" sub="Critical Data Objects" />
+        <Kpi label="CDEs Checked" value={kpis.cdes_checked} strip="acc" sub="Critical Data Elements" />
+        <Kpi label="Total Records Scanned" value={fmt(kpis.records_scanned)} strip="acc" sub={`${kpis.objects_checked} objects`} />
+        <Kpi label="Critical Failed Checks" value={fmt(kpis.critical_failed_checks)} strip="crit" sub="Critical + Error" />
         <Kpi label="Rule Coverage" value={`${kpis.rule_coverage_pct}%`} strip="acc" sub="CDEs with active rules" />
       </div>
 
@@ -163,14 +183,33 @@ function Overview({ onSelectObject, batchId }: { onSelectObject: (id: string) =>
   );
 }
 
-function ObjectDrilldown({ objectId, onBack }: { objectId: string; onBack: () => void }) {
+function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: {
+  objectId: string; source: string; objects: ObjectOption[];
+  onSelectObject: (id: string) => void; onBack: () => void;
+}) {
   const [data, setData] = useState<Drilldown | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // which rule produced the row the user clicked, plus that row's numbers
+  const [ruleDetail, setRuleDetail] = useState<{ rule: Rule; result: RuleRunResult } | null>(null);
+
+  async function showRule(el: DrilldownElement) {
+    try {
+      const rule = await api.rule(el.rule_id);
+      setRuleDetail({
+        rule,
+        result: {
+          entity_name: objectId, element_name: el.element_name, dimension: el.dimension,
+          records_checked: el.records_checked, records_failed: el.records_failed,
+          score_pct: el.score_pct,
+        },
+      });
+    } catch { /* a demo-seeded metric has no real rule behind it */ }
+  }
 
   useEffect(() => {
     setData(null);
-    api.drilldown(objectId).then(setData).catch((e) => setError(String(e.message || e)));
-  }, [objectId]);
+    api.drilldown(objectId, source).then(setData).catch((e) => setError(String(e.message || e)));
+  }, [objectId, source]);
 
   if (error) return <p className="mini">{error}</p>;
   if (!data) return <p className="mini">Loading…</p>;
@@ -180,14 +219,23 @@ function ObjectDrilldown({ objectId, onBack }: { objectId: string; onBack: () =>
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
+      <div className="crumbbar">
         <button className="backbtn" onClick={onBack}>◂ Back to overview</button>
         <span className="crumb">All objects&nbsp;›&nbsp;<b>{data.object_name}</b></span>
+        {/* switch object in place -- no trip back to the overview to pick another */}
+        {objects.length > 1 && (
+          <div className="crumbjump">
+            <span className="fl">Object</span>
+            <select value={objectId} onChange={(e) => onSelectObject(e.target.value)}>
+              {objects.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="kpis k4">
         <Kpi label="Overall DQ Score" value={`${data.overall_score}%`} strip={ragStrip(data.overall_score)} sub={data.object_name} />
-        <Kpi label="Elements Checked" value={data.elements_checked} strip="acc" sub="CDEs on this object" />
+        <Kpi label="Elements Checked" value={data.elements_checked} strip="acc" sub="Critical Data Elements" />
         <Kpi label="Records Scanned" value={fmt(data.records_scanned)} strip="acc" sub="this object" />
         <Kpi label="Failing Checks" value={fmt(totalFailed)} strip="warn" sub="this object" />
       </div>
@@ -207,14 +255,15 @@ function ObjectDrilldown({ objectId, onBack }: { objectId: string; onBack: () =>
           />
         </div>
         <div className="panel">
-          <h4>{data.object_name} · Data Elements <span className="hint">element → dimension → score → failed</span></h4>
+          <h4>{data.object_name} · Data Elements <span className="hint">click a row to see the rule behind it</span></h4>
           <table className="cde">
             <thead>
               <tr><th>Element</th><th>Dimension</th><th>Score</th><th>Failed</th><th>Severity</th></tr>
             </thead>
             <tbody>
-              {data.elements.map((el) => (
-                <tr key={el.element_name}>
+              {data.elements.map((el, i) => (
+                <tr key={`${el.element_name}-${el.dimension}-${i}`}
+                    className="clickable" onClick={() => showRule(el)}>
                   <td className="el">{el.element_name}</td>
                   <td>{el.dimension}</td>
                   <td className={`sc tone-${el.score_pct > 90 ? "good" : el.score_pct >= 80 ? "warn" : "crit"}`}>{el.score_pct}%</td>
@@ -226,6 +275,11 @@ function ObjectDrilldown({ objectId, onBack }: { objectId: string; onBack: () =>
           </table>
         </div>
       </div>
+
+      {ruleDetail && (
+        <RuleDetail rule={ruleDetail.rule} result={ruleDetail.result}
+                    onClose={() => setRuleDetail(null)} />
+      )}
     </>
   );
 }
@@ -245,8 +299,8 @@ function Kpi({ label, value, strip, sub }: { label: string; value: string | numb
 function SkeletonOverview() {
   return (
     <>
-      <div className="kpis k5">
-        {Array.from({ length: 5 }).map((_, i) => <div key={i} className="kpi sk" style={{ height: 86 }} />)}
+      <div className="kpis k6">
+        {Array.from({ length: 6 }).map((_, i) => <div key={i} className="kpi sk" style={{ height: 86 }} />)}
       </div>
       <div className="row" style={{ gridTemplateColumns: "1.55fr 1fr" }}>
         <div className="panel sk" style={{ height: 240 }} />
