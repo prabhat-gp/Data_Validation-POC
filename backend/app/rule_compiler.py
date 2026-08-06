@@ -157,25 +157,19 @@ def _regex_sql(col: str, param: str) -> str:
     """
     Regex matching is the ONE genuinely dialect-specific piece of the engine.
 
-        SQLite    REGEXP(pattern, value)   -- custom function we register
-        MySQL     value REGEXP pattern     -- operator
+        MySQL     value REGEXP pattern     -- operator   (what we run on)
         Postgres  value ~ pattern          -- operator
         Oracle    REGEXP_LIKE(value, pat)  -- function
 
     Resolved from the live connection so the same rule works on every backend.
     """
-    try:
-        from .database import results_engine
-        name = results_engine.dialect.name
-    except Exception:  # noqa: BLE001
-        name = "sqlite"
-    if name == "mysql":
-        return "{c} REGEXP :{p}".format(c=col, p=param)
+    from .database import results_engine
+    name = results_engine.dialect.name
     if name in ("postgresql", "postgres"):
         return "{c} ~ :{p}".format(c=col, p=param)
     if name == "oracle":
         return "REGEXP_LIKE({c}, :{p})".format(c=col, p=param)
-    return "REGEXP(:{p}, {c})".format(c=col, p=param)
+    return "{c} REGEXP :{p}".format(c=col, p=param)     # MySQL
 
 
 def _not_blank(col: str) -> str:
@@ -234,9 +228,9 @@ def _c_range(field, cfg, ctx: CompileContext) -> CompiledRule:
     if hi is not None:
         bounds.append(f"CAST({col} AS REAL) > :rmax"); params["rmax"] = hi
 
-    # CAST('L7E 1J9' AS REAL) silently returns 0.0 in SQLite, which would be
-    # reported as "below minimum" rather than "not a number". Guard on an
-    # actual numeric pattern so a range rule only judges numbers.
+    # CAST('L7E 1J9' AS REAL) silently returns 0.0 (verified on MySQL 8.3),
+    # which would be reported as "below minimum" rather than "not a number".
+    # Guard on an actual numeric pattern so a range rule only judges numbers.
     #   onNonNumeric = "skip" (default) -> ignore; it is a VALIDITY problem
     #   onNonNumeric = "flag"           -> report it as a range violation
     numeric = _regex_sql("TRIM({c})".format(c=col), "num_re")

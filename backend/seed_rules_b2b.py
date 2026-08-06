@@ -1,12 +1,14 @@
 """
 seed_rules_b2b.py
 -----------------
-20 rules across the four B2B entities, covering all 9 rule types.
+23 rules across the four B2B entities, covering all 9 rule types.
 
 Every rule targets a REAL problem visible in source_db, so a run produces
 meaningful numbers rather than a flat 100%.
 
-    python seed_rules_b2b.py            # create + approve all 20
+The backend must already be running -- these go in through the API.
+
+    python seed_rules_b2b.py            # create + approve all 23
     python seed_rules_b2b.py --clear    # delete every rule first
 
 Rules are created through the API so they go through the same validation,
@@ -14,11 +16,14 @@ id generation and approval flow the UI uses -- nothing is inserted directly.
 """
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 
-API = "http://localhost:8011/api"
+# The backend runs on 8000 by default; override with API_PORT if you started
+# uvicorn somewhere else.
+API = f"http://localhost:{os.getenv('API_PORT', '8000')}/api"
 
 
 def call(url, body=None, method="POST"):

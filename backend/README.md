@@ -1,43 +1,71 @@
-# SMTC Data Validation Framework — Backend (V1)
+# SMTC Data Validation Framework — Backend
+
+FastAPI + SQLAlchemy. MySQL only — there is no local-file fallback, so a
+missing `.env` fails at startup instead of silently starting against an empty
+database.
+
+## Databases
+
+| DB | Holds |
+|---|---|
+| `source_db` | the `b2b*` tables being validated — the app only ever reads these |
+| `config_db` | `val_rules` + the rule-type / severity / status lookups |
+| `target_db` | `val_batches`, `val_runs`, `val_metrics`, `val_violations`, staging |
+
+Connection comes from `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` plus
+`SOURCE_DB` / `CONFIG_DB` / `TARGET_DB`. Repo-root `.env` is read first,
+`backend/.env` overrides it. See `.env.example`.
 
 ## Setup
+
 ```bash
-cd backend
-python3 -m pip install -r requirements.txt
-python3 create_tables.py          # creates the 7 tables + seeds Account/16 CDEs. NO rules seeded.
-python3 -m uvicorn app.main:app --reload --port 8000
-```
-Default DB is a local SQLite file `smtc_dq.db` (gitignored). To point at Oracle/Postgres/MySQL instead,
-set `DATABASE_URL` before running, e.g.:
-```bash
-export DATABASE_URL="oracle+oracledb://user:pass@host:1521/service"
+pip install -r requirements.txt
+python create_tables.py
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
-## Prove it works against real data (before running on the office laptop)
-```bash
-python3 tests/test_engine_backtest.py
-```
-Runs the full pipeline (stage → compile rules → execute → violations → metrics) against
-`../data_dump/temp.csv` (101 real Account rows) in an isolated in-memory DB — doesn't touch `smtc_dq.db`.
+`create_tables.py` creates every `val_*` table and seeds the 9 rule types, 4
+severities and 6 statuses. It creates **zero rules** — rules are authored and
+approved by users through the UI. `--reset` drops and recreates.
 
-## Running against the real ~700MB accounts.csv (office laptop)
-Nothing about the code changes. Same `create_tables.py`, same API, same upload endpoint —
-just a bigger file and it takes longer. The engine never loads the whole file into memory
-(chunked staging, batched violation writes), and validation runs as a background task so the
-upload request itself doesn't time out.
+## Scripts
+
+| Script | Does |
+|---|---|
+| `create_tables.py` | schema + lookup seeding |
+| `seed_source_data.py` | appends the extra `b2b*` rows so every rule type has both passes and failures; re-running is safe, `--reset` removes them |
+| `seed_rules_b2b.py` | creates + approves 23 rules covering all 9 types, through the API (backend must be up) |
+| `seed_dummy.py` | dashboard demo runs for Hybris / SFDC / File Dump only — no rules, no violations |
+
+## How execution works
+
+Every rule compiles to **one SQL statement**. Python loops over rules (dozens),
+never over data rows. A batch runs in three phases so referential integrity can
+be a real `LEFT JOIN`:
+
+```
+stage all entities  ->  validate all  ->  clear staging
+```
+
+Only rules with `status = 'APPROVED' AND active = 1` execute.
+
+`rule_definition` JSON is the source of truth — SQL is regenerated at run time
+and never persisted, so a rule change takes effect on the next run with no
+migration.
 
 ## API surface
-- `GET  /api/objects`, `GET /api/objects/{id}/elements` — catalog (read-only in V1)
-- `POST /api/rules`, `GET /api/rules`, `POST /api/rules/{id}/submit|approve|reject`
-- `POST /api/rules/{id}/preview?run_id=...` — dry-run a rule against already-staged data before approving
-- `POST /api/runs/upload` (multipart file) — triggers a run in the background, returns immediately
-- `POST /api/runs/db-fetch` (connection_url + query) — same, for the DB-fetch source path
-- `GET  /api/runs`, `GET /api/runs/{id}` — poll run status
-- `GET  /api/dashboard/kpis|heatmap|top-failing|trend|fix-profile` — all read from DQ_METRIC only
-- `GET  /api/dashboard/object/{id}/drilldown`
-- `GET  /api/violations?run_id=...` (paginated), `GET /api/violations/export` (streamed CSV)
 
-## What's NOT built yet (by design, per current phase)
-- Rule suggestion / profiling automation (Phase 6 in the earlier plan)
-- Auth (explicitly deferred)
-- Remediation lifecycle on violations (explicitly out of V1 scope)
+- `POST|GET /api/rules`, `POST /api/rules/{id}/submit|approve|reject`
+- `POST /api/rules/{id}/preview?run_id=...` — dry-run against staged data before approving
+- `GET /api/entities`, `GET /api/entities/meta/rule-types`
+- `POST /api/runs/db-fetch`, `POST /api/runs/upload` — start a run in the background
+- `GET /api/runs`, `GET /api/runs/{id}` — poll status and progress
+- `GET /api/dashboard/summary` — the whole overview in one round trip
+- `GET /api/dashboard/object/{name}/drilldown`
+- `GET /api/violations?run_id=...`, `GET /api/violations/export`
+
+## Not built yet (by design)
+
+- Auth — Azure Entra ID SSO, deferred
+- Rule suggestion / profiling automation
+- Remediation lifecycle on violations

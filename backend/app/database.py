@@ -1,30 +1,22 @@
 """
 database.py
 -----------
-Single place for the DB connection. Default is a local SQLite file so this
-runs with zero setup on any laptop (dev machine or office laptop against the
-real 700MB accounts.csv). Swapping to Oracle/Postgres/MySQL later is just an
-env var change -- nothing else in the codebase should ever import a driver
-directly.
+Single place for the DB connections. Nothing else in the codebase imports a
+driver directly, so moving to Oracle/Postgres later is an env var change here.
 
-    DATABASE_URL=sqlite:///./smtc_dq.db                (fallback)
-    DATABASE_URL=oracle+oracledb://user:pass@host/service
-    DATABASE_URL=postgresql+psycopg://user:pass@host/db
+    CONFIG_DATABASE_URL / RESULTS_DATABASE_URL   full URL, wins if set
+    DB_HOST / DB_PORT / DB_USER / DB_PASSWORD    + CONFIG_DB / TARGET_DB
 
-RESOLUTION ORDER
-  1. DATABASE_URL, if set explicitly
-  2. the project's DB_* + CONFIG_DB variables (MySQL config_db)
-  3. local SQLite file
-
-That middle step is what puts val_rules / val_runs / val_metrics in the real
-config_db rather than a laptop-local SQLite file.
+If neither resolves, startup FAILS. There is deliberately no local-file
+fallback: a misread .env would otherwise start cleanly against an empty
+throwaway database, and the only symptom would be a dashboard showing
+nothing -- which looks like a bug in the engine, not a missing config.
 """
 
 import os
-import re
 from urllib.parse import quote_plus
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 # Same .env files ingestion.py reads: repo root first, backend/ overrides.
@@ -48,25 +40,26 @@ def _mysql_url(db_name_var: str):
     return f"mysql+pymysql://{user}:{pwd}@{host}:{port}/{db}"
 
 
+def _require(url, name, db_var):
+    if url:
+        return url
+    raise RuntimeError(
+        f"No connection for {name}. Set {db_var} (plus DB_HOST/DB_PORT/DB_USER/"
+        f"DB_PASSWORD) in .env, or {name}_DATABASE_URL for a full URL."
+    )
+
+
 # TWO databases, matching the .env layout:
 #   CONFIG_DB  -> val_rules + its lookup tables      (the governed asset)
 #   TARGET_DB  -> val_batches / val_runs / val_metrics / val_violations + staging
-CONFIG_URL = os.getenv("CONFIG_DATABASE_URL") or _mysql_url("CONFIG_DB") or "sqlite:///./config.db"
-RESULTS_URL = os.getenv("RESULTS_DATABASE_URL") or _mysql_url("TARGET_DB") or "sqlite:///./results.db"
+CONFIG_URL = _require(
+    os.getenv("CONFIG_DATABASE_URL") or _mysql_url("CONFIG_DB"), "CONFIG", "CONFIG_DB")
+RESULTS_URL = _require(
+    os.getenv("RESULTS_DATABASE_URL") or _mysql_url("TARGET_DB"), "RESULTS", "TARGET_DB")
 
 
 def _make(url):
-    args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    eng = create_engine(url, connect_args=args, future=True, pool_pre_ping=True)
-    if url.startswith("sqlite"):
-        # VALIDITY rules call REGEXP(pattern, value); SQLite has no built-in one.
-        @event.listens_for(eng, "connect")
-        def _add_regexp(conn, _):
-            conn.create_function(
-                "REGEXP", 2,
-                lambda p, v: 1 if v is not None and re.search(p, v) else 0,
-            )
-    return eng
+    return create_engine(url, future=True, pool_pre_ping=True)
 
 
 config_engine = _make(CONFIG_URL)

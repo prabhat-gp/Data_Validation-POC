@@ -15,3 +15,7 @@ frontend/node_modules/
 frontend/.next/
 frontend/.env.local
 *.tsbuildinfo
+
+# junk
+.DS_Store
+*.db
