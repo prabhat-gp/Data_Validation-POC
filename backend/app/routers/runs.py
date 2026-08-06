@@ -140,12 +140,12 @@ async def trigger_file_batch(
     """
     entities = [e.strip() for e in entity_names.split(",") if e.strip()]
     if len(entities) != len(files):
-        raise HTTPException(400, f"got {len(files)} files but {len(entities)} entity names")
+        raise HTTPException(400, f"got {len(files)} files but {len(entities)} object names")
     unknown = [e for e in entities if e not in ENTITIES]
     if unknown:
-        raise HTTPException(400, f"unknown entities: {unknown}")
+        raise HTTPException(400, f"unknown objects: {unknown}")
     if len(set(entities)) != len(entities):
-        raise HTTPException(400, "the same entity cannot appear twice in one batch")
+        raise HTTPException(400, "the same object cannot appear twice in one batch")
 
     batch = ValBatch(
         batch_name=batch_name, run_type="file_upload", source_system="File Dump",
@@ -193,12 +193,12 @@ def trigger_db_batch(
 
     entities = [e.strip() for e in payload.entity_names if e and e.strip()]
     if not entities:
-        raise HTTPException(400, "select at least one entity")
+        raise HTTPException(400, "select at least one object")
     unknown = [e for e in entities if e not in ENTITIES]
     if unknown:
-        raise HTTPException(400, f"unknown entities: {unknown}")
+        raise HTTPException(400, f"unknown objects: {unknown}")
     if len(set(entities)) != len(entities):
-        raise HTTPException(400, "the same entity cannot appear twice in one batch")
+        raise HTTPException(400, "the same object cannot appear twice in one batch")
 
     src = payload.source_system or ENTITIES[entities[0]]["source_system"]
     batch = ValBatch(

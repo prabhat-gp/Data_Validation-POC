@@ -78,8 +78,8 @@ export default function RuleDetail({
         )}
 
         <div className="rc-grid">
-          <span>Entity</span><b>{rule.entity_name}</b>
-          <span>Field</span><b>{rule.field_name || "— multi-field —"}</b>
+          <span>Object</span><b>{rule.entity_name}</b>
+          <span>Element</span><b>{rule.field_name || "— multi-element —"}</b>
           <span>Type</span><b>{rule.rule_type.replace(/_/g, " ")}</b>
           <span>Dimension</span><b>{result?.dimension || "—"}</b>
           <span>Key</span><b>{rule.primary_key_field}</b>

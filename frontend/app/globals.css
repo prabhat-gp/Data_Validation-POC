@@ -568,7 +568,7 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 table.cde tbody tr.clickable { cursor: pointer; }
 table.cde tbody tr.clickable:hover { background: var(--panel-2); }
 
-/* "multi-field" reads as a real label, not faded micro-text */
+/* "multi-element" reads as a real label, not faded micro-text */
 .tag-multi {
   font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
   color: var(--violet); background: var(--violet-bg);

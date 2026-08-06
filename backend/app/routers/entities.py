@@ -54,7 +54,7 @@ def list_columns(entity_name: str):
     """The field dropdown on the Rules page."""
     meta = ENTITIES.get(entity_name)
     if meta is None:
-        raise HTTPException(404, f"Unknown entity: {entity_name}")
+        raise HTTPException(404, f"Unknown object: {entity_name}")
     return meta["columns"]
 
 

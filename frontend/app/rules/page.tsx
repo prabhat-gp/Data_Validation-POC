@@ -9,7 +9,7 @@ import RuleDetail, { sevBadge, statusBadge } from "@/app/components/RuleDetail";
 /** Plain-English guide + the SQL each type becomes, shown for the current selection only. */
 const GUIDE: Record<string, { plain: string; example: string; sql: string }> = {
   COMPLETENESS: {
-    plain: "The field must not be empty. Any blank or NULL value is a violation.",
+    plain: "The element must not be empty. Any blank or NULL value is a violation.",
     example: "Every Account must have a Name.",
     sql: "WHERE Name IS NULL OR TRIM(Name) = ''",
   },
@@ -26,13 +26,13 @@ const GUIDE: Record<string, { plain: string; example: string; sql: string }> = {
   },
   UNIQUENESS: {
     plain:
-      "No two records may share the same value. Leave Field empty and list several fields to check a combination. Runs as one query — GROUP BY/HAVING in a subquery joined back, so BOTH sides of a duplicate are reported.",
+      "No two records may share the same value. Leave Element empty and list several elements to check a combination. Runs as one query — GROUP BY/HAVING in a subquery joined back, so BOTH sides of a duplicate are reported.",
     example: "No two Customers may share FIRST_NAME + LAST_NAME + DOB.",
     sql: "JOIN (SELECT x FROM t GROUP BY x HAVING COUNT(*) > 1) D ON t.x = D.x",
   },
   REFERENTIAL_INTEGRITY: {
     plain:
-      "The value must exist in another entity — the classic foreign-key check. The lookup entity must be included in the same run so the join has data.",
+      "The value must exist in another object — the classic foreign-key check. The lookup object must be included in the same run so the join has data.",
     example: "Every ORDERS.PART_NUMBER must exist in Part Master.",
     sql: "LEFT JOIN PART_MASTER P ON O.PART_NUMBER = P.PART_NUMBER WHERE P.PART_NUMBER IS NULL",
   },
@@ -49,13 +49,13 @@ const GUIDE: Record<string, { plain: string; example: string; sql: string }> = {
   },
   CROSS_FIELD_SIMPLE: {
     plain:
-      "A condition across several fields of the SAME record. Only this entity's own columns may be used.",
+      "A condition across several elements of the SAME record. Only this object's own columns may be used.",
     example: "If COUNTRY = 'US' then STATE must not be empty.",
     sql: "WHERE COUNTRY='US' AND STATE IS NULL",
   },
   CUSTOM_SQL: {
     plain:
-      "A custom expression over this entity's columns. Statements, comments and DDL/DML are rejected — it is not an arbitrary-SQL backdoor.",
+      "A custom expression over this object's columns. Statements, comments and DDL/DML are rejected — it is not an arbitrary-SQL backdoor.",
     example: "Flag phone numbers shorter than 7 characters.",
     sql: "WHERE LENGTH(TRIM(PHONE)) < 7",
   },
@@ -256,7 +256,7 @@ export default function RulesPage() {
             </button>
           </div>
           <div className="grid2">
-            <Fld label="Entity">
+            <Fld label="Object">
               <select value={entityName} onChange={(e) => setEntityName(e.target.value)}>
                 {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
               </select>
@@ -267,9 +267,9 @@ export default function RulesPage() {
               </select>
             </Fld>
             {needsField && (
-              <Fld label="Field">
+              <Fld label="Element">
                 <select value={fieldName} onChange={(e) => setFieldName(e.target.value)}>
-                  <option value="">Select a field…</option>
+                  <option value="">Select an element…</option>
                   {columns.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </Fld>
@@ -307,8 +307,8 @@ export default function RulesPage() {
           {ruleType === "UNIQUENESS" && (
             <Cfg>
               <p className="cfg-help">
-                Pick a single <b>Field</b> above, <b>or</b> tick two or more columns here to
-                check a combination — the Field selector then disappears.
+                Pick a single <b>Element</b> above, <b>or</b> tick two or more columns here to
+                check a combination — the Element selector then disappears.
               </p>
               <ChipPick options={columns} value={multiFields} onChange={setMultiFields} />
             </Cfg>
@@ -317,16 +317,16 @@ export default function RulesPage() {
           {ruleType === "REFERENTIAL_INTEGRITY" && (
             <Cfg>
               <p className="cfg-help">
-                The <b>Field</b> above is the column on {entityName}. Choose where it must exist —
-                the lookup entity must be in the same run.
+                The <b>Element</b> above is the column on {entityName}. Choose where it must exist —
+                the lookup object must be in the same run.
               </p>
               <div className="grid2">
-                <Fld label="Lookup Entity">
+                <Fld label="Lookup Object">
                   <select value={lookupEntity} onChange={(e) => setLookupEntity(e.target.value)}>
                     {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
                   </select>
                 </Fld>
-                <Fld label="Lookup Field">
+                <Fld label="Lookup Element">
                   <select value={lookupField} onChange={(e) => setLookupField(e.target.value)}>
                     <option value="">Select…</option>
                     {lookupChoices.map((c) => (
@@ -348,7 +348,7 @@ export default function RulesPage() {
                     {AGG_FUNCS.map((f) => <option key={f}>{f}</option>)}
                   </select>
                 </Fld>
-                <Fld label="Measure field">
+                <Fld label="Measure element">
                   <select value={aggField} onChange={(e) => setAggField(e.target.value)}>
                     <option value="*">* (row count)</option>
                     {columns.map((c) => <option key={c}>{c}</option>)}
@@ -382,7 +382,7 @@ export default function RulesPage() {
 
           {(ruleType === "CROSS_FIELD_SIMPLE" || ruleType === "CUSTOM_SQL") && (
             <Cfg>
-              <Fld label="Expression (this entity's columns only)">
+              <Fld label="Expression (this object's columns only)">
                 <input className="txt" value={expression}
                        placeholder="BillingCountry='USA' AND BillingState IS NULL"
                        onChange={(e) => setExpression(e.target.value)} />
@@ -441,7 +441,7 @@ export default function RulesPage() {
           <table className="cde">
             <thead>
               <tr>
-                <th>ID</th><th>Rule Name</th><th>Entity</th><th>Field</th>
+                <th>ID</th><th>Rule Name</th><th>Object</th><th>Element</th>
                 <th>Type</th><th>Severity</th><th>Status</th><th className="th-acts" />
               </tr>
             </thead>
@@ -456,7 +456,7 @@ export default function RulesPage() {
                   <td className="el mono">{r.rule_id}</td>
                   <td className="rname">{r.rule_name}</td>
                   <td>{r.entity_name}</td>
-                  <td>{r.field_name || <span className="tag-multi">multi-field</span>}</td>
+                  <td>{r.field_name || <span className="tag-multi">multi-element</span>}</td>
                   <td className="mini">{r.rule_type.replace(/_/g, " ")}</td>
                   <td><span className={`badge ${sevBadge(r.severity)}`}>{r.severity}</span></td>
                   <td><span className={`badge ${statusBadge(r.status)}`}>{r.status}</span></td>

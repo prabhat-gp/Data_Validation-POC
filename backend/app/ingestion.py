@@ -95,7 +95,7 @@ def _bulk_insert(db: Session, entity_name: str, rows: list):
 def _entity_meta(entity_name: str) -> dict:
     meta = ENTITIES.get(entity_name)
     if meta is None:
-        raise ValueError(f"Unknown entity {entity_name!r}. Known: {list(ENTITIES)}")
+        raise ValueError(f"Unknown object {entity_name!r}. Known: {list(ENTITIES)}")
     return meta
 
 

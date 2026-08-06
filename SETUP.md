@@ -74,10 +74,24 @@ Expect afterwards: `b2bsbg 8 · b2bcustomer 46 · b2bproduct 36 · b2bprice 38`
 
 ```bash
 python create_tables.py
+python migrate_db.py --apply
 ```
 
-Creates every table in `config_db` and `target_db` and seeds the 9 rule types,
-4 severities, 6 statuses. Creates **no rules**.
+`create_tables.py` creates every table in `config_db` and `target_db` and seeds
+the 9 rule types, 4 severities, 6 statuses. Creates **no rules**.
+
+`migrate_db.py` is needed because `create_all()` only creates *missing tables* —
+it never alters one that already exists. If `target_db` was set up before a
+column was added to the models, the table stays on the old shape and every
+query against it fails at run time:
+
+```
+(1054, "Unknown column 'val_runs.total_records' in 'field list'")
+```
+
+It only ever ADDs columns — never drops or rewrites anything — so it is safe on
+a database with data in it, and safe to run twice. Run without `--apply` first
+to see what it would do.
 
 ## 7. Start the backend
 

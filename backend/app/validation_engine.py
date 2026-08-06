@@ -91,7 +91,7 @@ def stage_run(db: Session, run_id: int, source_kind: str, file_path: Optional[st
     run = db.get(ValRun, run_id)
     entity = run.entity_name
     if entity not in ENTITIES:
-        raise ValueError(f"Unknown entity {entity!r}")
+        raise ValueError(f"Unknown object {entity!r}")
 
     run.status = "running"
     run.phase = "staging"

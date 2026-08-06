@@ -33,6 +33,7 @@ approved by users through the UI. `--reset` drops and recreates.
 | Script | Does |
 |---|---|
 | `create_tables.py` | schema + lookup seeding |
+| `migrate_db.py` | adds columns the models declare but the DB lacks — `create_all()` never alters an existing table, so this is what fixes `Unknown column ...` after a pull. Only ever ADDs; `--apply` to commit |
 | `seed_source_data.py` | appends the extra `b2b*` rows so every rule type has both passes and failures; re-running is safe, `--reset` removes them |
 | `seed_rules_b2b.py` | creates + approves 23 rules covering all 9 types, through the API (backend must be up) |
 | `seed_dummy.py` | dashboard demo runs for Hybris / SFDC / File Dump only — no rules, no violations |

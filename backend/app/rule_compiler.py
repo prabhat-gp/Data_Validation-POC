@@ -91,7 +91,7 @@ def _assert_safe_expression(expr: str, allowed_columns) -> str:
         if up in _EXPR_ALLOWED_WORDS or up in known:
             continue
         raise RuleCompileError(
-            f"'{tok}' is not a column of this entity (or an allowed SQL keyword)"
+            f"'{tok}' is not a column of this object (or an allowed SQL keyword)"
         )
     return expr
 
@@ -264,7 +264,7 @@ def _c_uniqueness(field, cfg, ctx: CompileContext) -> CompiledRule:
     fields = cfg.get("fields") or ([field] if field else [])
     fields = [assert_safe_identifier(f) for f in fields if f]
     if not fields:
-        raise RuleCompileError("UNIQUENESS requires field_name or rule_definition.fields")
+        raise RuleCompileError("UNIQUENESS requires an element, or two or more in rule_definition.fields")
 
     f, fp = _compile_filter(cfg)                 # applies to the inner scan
     f_outer, _ = _compile_filter(cfg, alias="C.")  # and to the outer scan
@@ -305,7 +305,7 @@ def _c_referential_integrity(field, cfg, ctx: CompileContext) -> CompiledRule:
     lookup_field = assert_safe_identifier(lookup_field)
     if not ctx.lookup_table:
         raise RuleCompileError(
-            "the referenced entity is not part of this run -- include it in the batch"
+            "the referenced object is not part of this run -- include it in the batch"
         )
     # A foreign key normally points at the other table's PRIMARY KEY, and
     # staging keeps the primary key in `record_key`, not as a data column.
@@ -314,7 +314,7 @@ def _c_referential_integrity(field, cfg, ctx: CompileContext) -> CompiledRule:
         lookup_col = "record_key"
     elif ctx.lookup_columns is not None and lookup_field not in ctx.lookup_columns:
         raise RuleCompileError(
-            f"'{lookup_field}' is not a column (or the key) of the referenced entity"
+            f"'{lookup_field}' is not a column (or the key) of the referenced object"
         )
     else:
         lookup_col = lookup_field

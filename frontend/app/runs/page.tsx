@@ -43,10 +43,10 @@ export default function RunsPage() {
   async function submitUpload() {
     setError(null); setNotice(null);
     const valid = slots.filter((s) => s.file && s.entity);
-    if (!valid.length) { setError("Add at least one file and pick its entity."); return; }
+    if (!valid.length) { setError("Add at least one file and pick its object."); return; }
     const names = valid.map((s) => s.entity);
     if (new Set(names).size !== names.length) {
-      setError("The same entity cannot appear twice in one run.");
+      setError("The same object cannot appear twice in one run.");
       return;
     }
     const fd = new FormData();
@@ -60,7 +60,7 @@ export default function RunsPage() {
       const res = await fetch(`${API_BASE}/api/runs/upload`, { method: "POST", body: fd });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
       const b = await res.json();
-      setNotice(`Started Run #${b.batch_id} across ${b.entity_count} entit${b.entity_count === 1 ? "y" : "ies"}.`);
+      setNotice(`Started Run #${b.batch_id} across ${b.entity_count} object${b.entity_count === 1 ? "" : "s"}.`);
       refresh();
     } catch (e: any) { setError(String(e.message || e)); }
     finally { setBusy(false); }
@@ -68,7 +68,7 @@ export default function RunsPage() {
 
   async function submitDbRun() {
     setError(null); setNotice(null);
-    if (!dbSelected.length) { setError("Select at least one entity."); return; }
+    if (!dbSelected.length) { setError("Select at least one object."); return; }
     setBusy(true);
     try {
       const b = await api.runFromDb({
@@ -76,7 +76,7 @@ export default function RunsPage() {
         batch_name: `DB fetch · ${new Date().toLocaleString()}`,
         triggered_by: "prabhat",
       });
-      setNotice(`Started Run #${b.batch_id} across ${b.entity_count} entit${b.entity_count === 1 ? "y" : "ies"}.`);
+      setNotice(`Started Run #${b.batch_id} across ${b.entity_count} object${b.entity_count === 1 ? "" : "s"}.`);
       // show the batch (and its progress bars) straight away, then poll
       setBatches((prev) => [b, ...prev.filter((x) => x.batch_id !== b.batch_id)]);
       setOpen((o) => ({ ...o, [b.batch_id]: true }));
@@ -90,7 +90,7 @@ export default function RunsPage() {
       <div className="topbar">
         <div>
           <h1>Validation Runs</h1>
-          <div className="sub">One run covers one or more entities — each is validated independently</div>
+          <div className="sub">One run covers one or more objects — each is validated independently</div>
         </div>
       </div>
 
@@ -111,7 +111,7 @@ export default function RunsPage() {
           {mode === "upload" ? (
             <>
               <p className="mini dim" style={{ marginBottom: 12 }}>
-                One file per entity. Only the entity’s declared columns are staged — extra
+                One file per object. Only the object’s declared columns are staged — extra
                 columns in the file are ignored, missing ones fail fast.
               </p>
               {slots.map((s, i) => (
@@ -147,7 +147,7 @@ export default function RunsPage() {
                 </select>
               </div>
               <p className="mini dim" style={{ margin: "10px 0 12px" }}>
-                Pick entities — the query is generated from the catalog. No connection details
+                Pick objects — the query is generated from the catalog. No connection details
                 or SQL are entered here.
               </p>
               <div className="checkrow">
@@ -183,7 +183,7 @@ export default function RunsPage() {
                 );
               })}
               {entities.filter((e) => e.source_system === dbSource).length === 0 && (
-                <p className="mini dim">No entities are configured for {dbSource}.</p>
+                <p className="mini dim">No objects are configured for {dbSource}.</p>
               )}
               <div className="form-actions">
                 <button className="btn-primary" onClick={submitDbRun}
@@ -208,7 +208,7 @@ export default function RunsPage() {
                 <b>Run #{b.batch_id}</b>
                 <span className={`badge ${batchBadge(b.status)}`}>{b.status.replace(/_/g, " ")}</span>
                 <span className="mini dim">
-                  {b.entity_count} entit{b.entity_count === 1 ? "y" : "ies"} · {b.run_type.replace("_", " ")}
+                  {b.entity_count} object{b.entity_count === 1 ? "" : "s"} · {b.run_type.replace("_", " ")}
                   {b.triggered_by ? ` · ${b.triggered_by}` : ""}
                 </span>
                 <span className="spacer" />

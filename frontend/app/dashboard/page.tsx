@@ -115,7 +115,7 @@ function Overview({ onSelectObject, onObjects, batchId, source }: {
       <div className="card">
         <h2>No completed runs for {source}</h2>
         <p className="mini">
-          Go to <b>Runs</b> and validate some entities from this source, or pick a
+          Go to <b>Runs</b> and validate some objects from this source, or pick a
           different source in the sidebar.
         </p>
         <p className="mini" style={{ marginTop: 8, opacity: .7 }}>{error}</p>

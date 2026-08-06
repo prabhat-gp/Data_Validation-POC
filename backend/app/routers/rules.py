@@ -89,7 +89,7 @@ def create_rule(payload: RuleCreate, db: Session = Depends(get_db)):
     require_role(payload.role, "owner")
     meta = ENTITIES.get(payload.entity_name)
     if meta is None:
-        raise HTTPException(400, f"Unknown entity: {payload.entity_name}")
+        raise HTTPException(400, f"Unknown object: {payload.entity_name}")
     if payload.field_name and payload.field_name not in meta["columns"]:
         raise HTTPException(
             400,
@@ -265,7 +265,7 @@ def update_rule(rule_id: int, payload: RuleCreate, db: Session = Depends(get_db)
 
     meta = ENTITIES.get(payload.entity_name)
     if meta is None:
-        raise HTTPException(400, f"Unknown entity: {payload.entity_name}")
+        raise HTTPException(400, f"Unknown object: {payload.entity_name}")
     definition_json = json.dumps(payload.rule_definition or {})
     ctx = CompileContext(table="stg_x", columns=meta["columns"],
                          lookup_table="stg_lookup", lookup_run_id=0)
