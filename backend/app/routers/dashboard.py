@@ -136,6 +136,10 @@ def kpis(batch_id: Optional[int] = None, source_system: Optional[str] = None, db
         # checks but 1 bad record. Precomputed on the run; see finish_run().
         "records_affected": sum(s["run"].records_affected or 0 for s in state),
         "critical_failed_checks": critical_failed,
+        # Rule Coverage's denominator: declared elements of the objects that
+        # ACTUALLY RAN. Running Account alone gives 16, not 33 -- an object
+        # that was not in the batch cannot drag its coverage down.
+        "elements_declared": total_fields,
         # The DQ score's denominator. Published so the UI can show
         # "38 of 890 checks" rather than inviting 38/128.
         "checks_run": checked,

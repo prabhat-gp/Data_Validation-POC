@@ -68,6 +68,61 @@ python seed_dummy.py --reset
 
 ---
 
+
+---
+
+## Adding Account (the 650 MB export)
+
+Do this AFTER the b2b bootstrap above. It adds a 5th object; the b2b data and
+rules are untouched.
+
+**A. Check the header matches** — reads one line, takes a second:
+
+```bash
+python prepare_account.py --inspect "C:\path\accounts.csv"
+```
+
+Every one of the 17 needed columns must say `ok`. For anything `MISSING` it
+prints the near matches actually in the file — fix
+`ENTITIES["Account"]["columns"]` in `app/models.py` before loading. A column
+that does not match arrives as NULL and scores 0% Completeness for reasons
+that have nothing to do with data quality.
+
+**B. Slice and load** — streams the file, keeps 17 of 450 columns:
+
+```bash
+python prepare_account.py "C:\path\accounts.csv"
+```
+
+~2,700 rows/sec. 150,000 rows takes about a minute and produces a 23 MB table
+from a 580 MB file. Do NOT use the Workbench import wizard — it is what put
+CSV header rows into `b2bproduct` and `b2bsbg` as data.
+
+**C. Load the 25 Account rules:**
+
+```bash
+python seed_rules_account.py            # backend running
+python seed_rules_account.py --direct   # backend not running
+```
+
+**D. Run it.** Runs → source MySQL → tick **Account only** → start.
+That becomes its own run, separate from the b2b run.
+
+Expected: Rule Coverage **100% (16 of 16 elements)** — Account declares 16 CDEs
+and all 25 rules together judge every one. Coverage is scoped to the objects in
+the selected run, so an Account-only run is measured against Account's 16
+columns, not against all 33 across both datasets.
+
+Before trusting the two ALLOWED_VALUES rules, check the real domains — a value
+missing from the list reports as a failure:
+
+```sql
+SELECT Type,      COUNT(*) FROM account GROUP BY Type      ORDER BY 2 DESC;
+SELECT Region__c, COUNT(*) FROM account GROUP BY Region__c ORDER BY 2 DESC;
+```
+
+---
+
 ## Doing it step by step instead
 
 `bootstrap.py` just runs these in order. Use them individually if you only need

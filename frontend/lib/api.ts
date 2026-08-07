@@ -117,6 +117,7 @@ export interface Kpis {
   records_scanned: number;
   records_affected: number;   // rows with >=1 violation
   critical_failed_checks: number;
+  elements_declared: number;  // Rule Coverage's denominator
   checks_run: number;         // the DQ score's denominator
   checks_failed: number;
   rule_coverage_pct: number;

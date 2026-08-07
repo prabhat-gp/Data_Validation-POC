@@ -132,7 +132,7 @@ function Overview({ onSelectObject, onObjects, batchId, source }: {
         <Kpi label="CDEs Checked" value={kpis.cdes_checked} strip="acc" sub="Critical Data Elements" />
         <Kpi label="Records Scanned" value={fmt(kpis.records_scanned)} strip="acc" sub={`${kpis.objects_checked} objects · ${fmt(kpis.records_affected)} affected`} />
         <Kpi label="Critical Failed Checks" value={fmt(kpis.critical_failed_checks)} strip="crit" sub={`of ${fmt(kpis.checks_run)} checks run`} />
-        <Kpi label="Rule Coverage" value={`${kpis.rule_coverage_pct}%`} strip="acc" sub={`${kpis.cdes_checked} CDEs have rules`} />
+        <Kpi label="Rule Coverage" value={`${kpis.rule_coverage_pct}%`} strip="acc" sub={`${kpis.cdes_checked} of ${kpis.elements_declared} elements`} />
       </div>
 
       <div className="row" style={{ gridTemplateColumns: "1.55fr 1fr" }}>
