@@ -215,7 +215,14 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
   if (!data) return <p className="mini">Loading…</p>;
 
   const dims = Object.entries(data.dimension_scores).sort((a, b) => b[1] - a[1]);
+  // ALL severities. The overview's "Critical Failed Checks" is the blocking
+  // SUBSET of this same number, so both are shown here -- otherwise 711K on
+  // one page and 213K on the other look like a contradiction.
   const totalFailed = data.elements.reduce((a, e) => a + e.records_failed, 0);
+  const blockingFailed = data.elements
+    .filter((e) => e.severity === "CRITICAL" || e.severity === "ERROR")
+    .reduce((a, e) => a + e.records_failed, 0);
+  const totalChecked = data.elements.reduce((a, e) => a + e.records_checked, 0);
 
   return (
     <>
@@ -235,9 +242,9 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
 
       <div className="kpis k4">
         <Kpi label="Overall DQ Score" value={`${data.overall_score}%`} strip={ragStrip(data.overall_score)} sub={data.object_name} />
-        <Kpi label="Elements Checked" value={data.elements_checked} strip="acc" sub={`${data.checks_run} checks run`} />
-        <Kpi label="Records Scanned" value={fmt(data.records_scanned)} strip="acc" sub="this object" />
-        <Kpi label="Failing Checks" value={fmt(totalFailed)} strip="warn" sub="this object" />
+        <Kpi label="Elements Checked" value={data.elements_checked} strip="acc" sub={`${data.checks_run} rules ran`} />
+        <Kpi label="Records Scanned" value={fmt(data.records_scanned)} strip="acc" sub={`${fmt(totalChecked)} checks run`} />
+        <Kpi label="Failing Checks" value={fmt(totalFailed)} strip="warn" sub={`all severities · ${fmt(blockingFailed)} blocking`} />
       </div>
 
       <div className="row" style={{ gridTemplateColumns: ".85fr 1.6fr" }}>
