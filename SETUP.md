@@ -209,3 +209,72 @@ and no violations; it is dashboard filler for the demo only.
   (Manage Rules page), since only those execute.
 - Wrong objects showing → check the Data Source picker in the sidebar; the
   dashboard is filtered by source.
+
+---
+
+## Preparing the Account CSV (650 MB, 450 columns)
+
+The export is too wide and too large for Excel, and loading it whole would move
+~600 MB to store ~23 MB anyone looks at. `prepare_account.py` streams it —
+one row in memory at a time — keeping only `Id` plus the 16 CDEs declared for
+Account in `models.ENTITIES`.
+
+**Step 1 — check the header before moving any data.** Reads one line, takes a
+second. A 450-column export rarely uses the exact API names.
+
+```bash
+python prepare_account.py --inspect "C:\path\accounts.csv"
+```
+
+It prints every needed column as `ok` or `MISSING`, and for anything missing
+suggests the near matches actually present:
+
+```
+  MISSING  Region__c
+    Region__c  ->  ['REGION']
+```
+
+If anything is missing, edit `ENTITIES["Account"]["columns"]` in
+`app/models.py` to the real names **before** loading. A missing column arrives
+as NULL and scores 0% Completeness for reasons that have nothing to do with
+data quality.
+
+**Step 2 — slice and load.**
+
+```bash
+python prepare_account.py "C:\path\accounts.csv"
+```
+
+Creates `source_db.account` (17 TEXT columns, index on `Id`) and batch-inserts
+5,000 rows at a time. Add `--out account_17col.csv` to also write the small CSV,
+`--slice-only` to skip MySQL, `--limit 5000` for a trial run, `--table NAME`
+for a different table name.
+
+Measured on a synthetic 580 MB / 450-column / 150,000-row file:
+
+| Stage | Time |
+|---|---|
+| slice + load to MySQL | 55 s (~2,700 rows/sec) |
+| staging into `stg_account` | ~35 s |
+| validating 6 rules | ~15 s |
+
+Output CSV was 23 MB, down from 580 MB.
+
+**Do not use the Workbench import wizard for this.** It is what put CSV header
+rows into `b2bproduct` and `b2bsbg` as data, and it mangles fields containing
+both a comma and embedded quotes. This script uses `DictReader`, so the header
+is consumed and `0 Main St, Suite "A"` round-trips intact.
+
+**Step 3 — the entity already points at the new table.** `models.ENTITIES`
+now has Account as:
+
+```python
+"source_system": "MySQL",
+"source_object_name": "account",
+```
+
+so it reads the MySQL table rather than expecting a live Salesforce
+connection. Switch back to `"SFDC"` once one exists.
+
+Then write Account rules on the Manage Rules page, approve them, and
+**Runs → source MySQL → tick Account → start**.

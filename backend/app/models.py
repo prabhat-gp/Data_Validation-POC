@@ -58,9 +58,13 @@ def utcnow():
 SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"]
 
 ENTITIES: dict = {
+    # SFDC data, but the 650MB / 450-column export is sliced to these 17
+    # columns and landed in MySQL source_db by prepare_account.py -- so the
+    # run reads it over the MySQL connection like any other table. Switch
+    # source_system back to "SFDC" once there is a live Salesforce connection.
     "Account": {
-        "source_system": "SFDC",
-        "source_object_name": "Account",
+        "source_system": "MySQL",
+        "source_object_name": "account",
         "primary_key_field": "Id",
         "columns": [
             "BillingCity", "BillingCountry", "BillingPostalCode", "BillingState",
