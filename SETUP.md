@@ -75,23 +75,15 @@ Both rule sets were rewritten to be simple and readable — 20 rules each, every
 rule obvious from its name. If you need to reset rules and results without
 touching source data:
 
-**1. Wipe rules and every run result** (leaves `source_db` alone):
+**1. Clear the old rules and run history** — `source_db` is never touched:
 
 ```bash
-cd backend
-python - <<'EOF'
-from app.database import ConfigSession, ResultsSession
-from sqlalchemy import text
-c, r = ConfigSession(), ResultsSession()
-c.execute(text('DELETE FROM val_rules')); c.commit()
-for t in ['val_violations','val_metrics','val_runs','val_batches']:
-    r.execute(text(f'DELETE FROM {t}'))
-for t in ['val_batches','val_runs']:
-    r.execute(text(f'ALTER TABLE {t} AUTO_INCREMENT = 1'))
-c.execute(text('ALTER TABLE val_rules AUTO_INCREMENT = 1')); c.commit(); r.commit()
-print('rules and results cleared, ids reset to 1')
-EOF
+python reset_db.py --apply
 ```
+
+Run it without `--apply` first if you want to see what it would delete.
+This is needed because the seed scripts ADD rules — without clearing you would
+end up with the old set and the new set side by side.
 
 **2. Load both rule sets.** `--direct` writes to `val_rules` without needing
 the backend up; drop it to go through the API instead.

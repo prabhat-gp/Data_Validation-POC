@@ -35,6 +35,7 @@ approved by users through the UI. `--reset` drops and recreates.
 | `prepare_account.py` | slices the 650MB / 450-column Account export down to the 17 declared columns and loads it into `source_db.account`; `--inspect` checks the header first |
 | `bootstrap.py` | **builds everything from nothing** — 3 databases, source tables + rows, val_* schema, 23 approved rules. `--force` drops the databases first |
 | `create_tables.py` | schema + lookup seeding |
+| `reset_db.py` | clears all rules and run history so they can be re-seeded; never touches source_db. Dry-run by default, `--apply` to commit |
 | `migrate_db.py` | adds columns the models declare but the DB lacks, and backfills rule/metric dimensions after a reclassification — `create_all()` never alters an existing table, so this is what fixes `Unknown column ...` after a pull. Only ever ADDs; `--apply` to commit |
 | `seed_source_data.py` | appends the extra `b2b*` rows so every rule type has both passes and failures; re-running is safe, `--reset` removes them |
 | `seed_rules_b2b.py` | creates + approves 23 rules covering all 9 types, through the API (backend must be up) |
