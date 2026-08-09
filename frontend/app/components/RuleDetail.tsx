@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { Rule } from "@/lib/api";
+import React, { useState } from "react";
+import { Rule, ViolationQuery, api } from "@/lib/api";
 
 /** Result of this rule in the run being viewed -- only passed from the drilldown. */
 export interface RuleRunResult {
@@ -100,6 +100,13 @@ export default function RuleDetail({
           {rule.error_message && <div>Message: “{rule.error_message}”</div>}
         </div>
 
+        {/* Only from the dashboard drilldown. On the Rules page there is no
+            run behind the rule, so "the failing rows" would have no meaning --
+            the rule may never have executed. `result` is the run context. */}
+        {result && (
+          <ViolationQueryBlock ruleId={rule.rule_id} failed={result.records_failed} />
+        )}
+
         <details className="rc-json">
           <summary>Raw definition</summary>
           <pre>{JSON.stringify(d, null, 2)}</pre>
@@ -117,4 +124,61 @@ export function statusBadge(s: string) {
     APPROVED: "b-good", PENDING: "b-warn", DRAFT: "b-acc",
     UPDATED: "b-violet", REJECTED: "b-crit", RETIRED: "b-crit",
   } as any)[s] || "b-acc";
+}
+
+
+/**
+ * "Show me the rows" -- SQL the user can paste into their own client.
+ *
+ * Generated against the SOURCE tables, not the staging tables the engine runs
+ * on, so it is actually runnable where their data lives. Row count is capped
+ * at 10: this is for eyeballing what went wrong, not for extracting a
+ * remediation list.
+ *
+ * Fetched on expand rather than with the rule -- most people open a rule to
+ * read its config, not to run SQL, and this keeps the modal instant.
+ */
+function ViolationQueryBlock({ ruleId, failed }: { ruleId: number; failed: number }) {
+  const [q, setQ] = useState<ViolationQuery | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function load(open: boolean) {
+    if (!open || q || err) return;
+    api.violationQuery(ruleId, 10)
+      .then(setQ)
+      .catch((e) => setErr(String(e.message || e)));
+  }
+
+  async function copy() {
+    if (!q) return;
+    try {
+      await navigator.clipboard.writeText(q.sql);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch { /* clipboard blocked -- the text is selectable anyway */ }
+  }
+
+  if (failed === 0) return null;      // nothing failed, nothing to look at
+
+  return (
+    <details className="rc-json vq" onToggle={(e) => load((e.target as HTMLDetailsElement).open)}>
+      <summary>Show the failing rows &nbsp;<span className="vq-hint">SQL for your database</span></summary>
+      {err && <p className="mini" style={{ color: "var(--crit)" }}>{err}</p>}
+      {!q && !err && <p className="mini">Building query…</p>}
+      {q && (
+        <>
+          <div className="vq-head">
+            <span className="mini">{q.note}</span>
+            <button className="btn-mini" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+          </div>
+          <pre className="vq-sql">{q.sql}</pre>
+          <p className="mini vq-foot">
+            Runs against <b>{q.table}</b> in your <b>source</b> database. Capped at 10 rows —
+            remove the LIMIT to see all{typeof failed === "number" ? ` ${failed.toLocaleString()}` : ""}.
+          </p>
+        </>
+      )}
+    </details>
+  );
 }

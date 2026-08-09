@@ -1,0 +1,75 @@
+/* ============================================================================
+   HONEYWELL AEROSPACE DESIGN TOKENS
+   ----------------------------------------------------------------------------
+   The colour, type, radius and spacing scale used across Honeywell Aerospace
+   application screens. Every theme variable in globals.css maps onto these, so
+   a brand change is edited here once rather than hunted through the stylesheet.
+
+   TYPE: this is the APPLICATION scale, not the marketing one.
+       14px / 500   dominant UI text
+       16px / 500   secondary UI text
+       12px / 500   small labels
+       700          headings and display numbers
+   Honeywell's marketing pages use light 300-weight hero type; carried across a
+   dense dashboard it reads washed out, which is why the app scale is heavier.
+   ========================================================================== */
+
+:root {
+  /* ---- type scale ------------------------------------------------------- */
+  --fs-micro: 12px;
+  --fs-body: 14px;     /* dominant UI text */
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 20px;
+  --fs-2xl: 24px;
+  --fs-3xl: 30px;
+  --fs-4xl: 36px;
+
+  --fw-regular: 400;
+  --fw-medium: 500;    /* UI text, labels, table cells */
+  --fw-bold: 700;      /* headings and display numbers */
+
+  /* ---- colour ----------------------------------------------------------- */
+  --aero-text-primary: #1e1e25;
+  --aero-text-secondary: #4d5761;
+  --aero-text-strong: #384348;
+  --aero-text-tertiary: #777e80;
+  --aero-disabled: #a2a6a8;
+
+  --aero-surface-primary: #ffffff;
+  --aero-surface-elevated: #fcfcfd;
+  --aero-surface-secondary: #f8f8f8;
+  --aero-surface-tertiary: #f3f4f6;
+
+  --aero-border-primary: #d2d6db;
+  --aero-border-secondary: #eaebeb;
+
+  --aero-accent: #ff4f00;        /* the application accent. The logo artwork
+                                    uses #ff4400; UI components use #ff4f00. */
+  --aero-accent-soft: #ffcdb6;
+  --aero-accent-ink: #b54708;    /* accent text on light backgrounds */
+
+  --aero-success: #067647;
+  --aero-warning: #b54708;
+  --aero-error: #d31d10;
+  --aero-error-dark: #b42318;
+  --aero-info: #006b8c;
+  --aero-teal: #3d9295;
+
+  /* ---- radius ----------------------------------------------------------- */
+  --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-xl: 12px; --r-3xl: 24px;
+  --r-full: 9999px;
+
+  /* ---- spacing ---------------------------------------------------------- */
+  --sp-2: 2px;  --sp-4: 4px;  --sp-6: 6px;  --sp-8: 8px;   --sp-12: 12px;
+  --sp-16: 16px; --sp-20: 20px; --sp-24: 24px; --sp-32: 32px; --sp-40: 40px;
+  --sp-48: 48px; --sp-64: 64px; --sp-80: 80px; --sp-96: 96px;
+
+  /* ---- elevation -------------------------------------------------------- */
+  --aero-shadow-xs: 0 1px 2px #0a0d120d;
+  --aero-shadow-sm: 0 1px 3px #0a0d121a, 0 1px 2px #0a0d120f;
+  --aero-shadow-lg: 0 4px 6px #0a0d1208, 0 12px 16px #0a0d120a;
+
+  --aero-container-max: 1280px;
+  --aero-breakpoint-mobile: 768px;
+}

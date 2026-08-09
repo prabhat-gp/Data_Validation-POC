@@ -29,6 +29,7 @@ from ..rule_compiler import (
     execution_type_for,
 )
 from ..schemas import RuleCreate, RuleOut, RuleTransition
+from ..violation_query import build as build_violation_query
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
@@ -88,7 +89,12 @@ def list_rules(
         q = q.filter(ValRule.entity_name == entity_name)
     if status:
         q = q.filter(ValRule.status == status)
-    return q.order_by(ValRule.created_date.desc()).all()
+    # Oldest first. rule_id is a plain autoincrement, so this is also creation
+    # order -- a new rule lands at the BOTTOM of the list where the user just
+    # added it, instead of jumping to the top. created_date was the old sort
+    # key and ties (a seed script creating 20 rules in the same second) came
+    # back in arbitrary order.
+    return q.order_by(ValRule.rule_id.asc()).all()
 
 
 @router.post("", response_model=RuleOut)
@@ -330,3 +336,19 @@ def show_sql(rule_id: int, db: Session = Depends(get_db)):
         "filter_sql": compiled.filter_sql,
         "dimension": dimension_for(rule.rule_type),
     }
+
+
+@router.get("/{rule_id}/violation-query")
+def violation_query(rule_id: int, limit: int = 10, db: Session = Depends(get_db)):
+    """
+    SQL the user can paste into their own client to SEE this rule's failures.
+
+    Generated against the SOURCE tables, not the staging tables the engine
+    uses -- see app/violation_query.py. Read-only by construction: every
+    builder emits a single SELECT.
+    """
+    rule = _get_rule(db, rule_id)
+    try:
+        return build_violation_query(rule, ENTITIES, limit=max(1, min(limit, 1000)))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))

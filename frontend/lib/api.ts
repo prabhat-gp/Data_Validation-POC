@@ -214,6 +214,15 @@ export interface BatchOption {
 
 export interface SourceCheck { ok: boolean; detail: string }
 
+/** Runnable SQL that returns the rows a rule failed on, from the SOURCE db. */
+export interface ViolationQuery {
+  sql: string;
+  database: string;
+  object: string;
+  table: string;
+  note: string;
+}
+
 export const SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"];
 
 export const SEVERITIES = ["INFO", "WARNING", "ERROR", "CRITICAL"];
@@ -244,6 +253,8 @@ export const api = {
   transitionRule: (ruleId: number, action: "submit" | "approve" | "reject", actor: string) =>
     post<Rule>(`/api/rules/${ruleId}/${action}`, { actor, role: getRole() }),
   ruleSql: (ruleId: number) => get<any>(`/api/rules/${ruleId}/sql`),
+  violationQuery: (ruleId: number, limit = 10) =>
+    get<ViolationQuery>(`/api/rules/${ruleId}/violation-query?limit=${limit}`),
   updateRule: (ruleId: number, body: any) =>
     put<Rule>(`/api/rules/${ruleId}`, { ...body, role: getRole() }),
   retireRule: (ruleId: number, actor: string) =>

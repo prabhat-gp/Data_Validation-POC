@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Role, SOURCE_SYSTEMS, getActor, getRole, setActor, setRole } from "@/lib/api";
+import BrandMark from "./BrandMark";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
@@ -76,6 +77,8 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
+      <BrandMark />
+
       <div className="brand">
         <span className="mark">DQ</span>
         <span>
@@ -83,15 +86,20 @@ export default function Sidebar() {
         </span>
       </div>
 
-      <div className="src-pick">
-        <div className="nav-label">Data Source</div>
-        <select value={source} onChange={(e) => changeSource(e.target.value)}>
-          {SOURCE_SYSTEMS.map((s) => <option key={s}>{s}</option>)}
-        </select>
-      </div>
+      {/* Only the dashboard reads the source. On Rules and Runs it is either
+          irrelevant (rules are authored per object) or set on the page itself
+          (Runs has its own source picker), so leaving it here would be a
+          second control that silently disagrees with the one in view. */}
+      {pathname === "/dashboard" && (
+        <div className="src-pick">
+          <div className="nav-label">Source System</div>
+          <select value={source} onChange={(e) => changeSource(e.target.value)}>
+            {SOURCE_SYSTEMS.map((s) => <option key={s}>{s}</option>)}
+          </select>
+        </div>
+      )}
 
       <nav className="nav">
-        <div className="nav-label">Workspace</div>
         {visible.map((item) => (
           <Link key={item.href} href={item.href} className={pathname === item.href ? "active" : ""}>
             {item.label}

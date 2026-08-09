@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import Sidebar from "./components/Sidebar";
 
+
 export const metadata: Metadata = {
   title: "DQ Score",
   description: "SMTC data quality validation",

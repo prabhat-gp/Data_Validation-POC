@@ -2,7 +2,7 @@
 
 One command builds everything: the three databases, all source tables with
 their rows (correct and deliberately wrong), the full `val_*` schema, and the
-23 approved rules.
+20 approved B2B rules.
 
 ```bash
 git pull
@@ -33,7 +33,7 @@ Expected:
     b2bprice           38 rows
     TOTAL             126 rows
   config_db
-    val_rules          23 rows
+    val_rules          20 rows
   target_db
     (empty until you run)
 ```
@@ -52,13 +52,14 @@ cd frontend && npm install && npm run dev
 
 | KPI | Value |
 |---|---|
-| Overall DQ Score | 93.7% |
+| Overall DQ Score | ~93% |
 | Objects Checked | 4 |
-| CDEs Checked | 13 |
+| CDEs Checked | 13 of 17 |
 | Records Scanned | 126 |
-| Records Affected | 53 |
-| Critical Failed Checks | 35 |
 | Rule Coverage | 76.5% |
+
+(126 not 128 — this laptop's `b2bproduct`/`b2bsbg` carry two CSV header rows
+loaded as data by an old Workbench import. `bootstrap.py` loads cleanly.)
 
 Optional, to give Hybris / SFDC / File Dump something on the dashboard:
 
@@ -68,8 +69,76 @@ python seed_dummy.py --reset
 
 ---
 
+## Rebuilding the rules from scratch
 
----
+Both rule sets were rewritten to be simple and readable — 20 rules each, every
+rule obvious from its name. If you need to reset rules and results without
+touching source data:
+
+**1. Wipe rules and every run result** (leaves `source_db` alone):
+
+```bash
+cd backend
+python - <<'EOF'
+from app.database import ConfigSession, ResultsSession
+from sqlalchemy import text
+c, r = ConfigSession(), ResultsSession()
+c.execute(text('DELETE FROM val_rules')); c.commit()
+for t in ['val_violations','val_metrics','val_runs','val_batches']:
+    r.execute(text(f'DELETE FROM {t}'))
+for t in ['val_batches','val_runs']:
+    r.execute(text(f'ALTER TABLE {t} AUTO_INCREMENT = 1'))
+c.execute(text('ALTER TABLE val_rules AUTO_INCREMENT = 1')); c.commit(); r.commit()
+print('rules and results cleared, ids reset to 1')
+EOF
+```
+
+**2. Load both rule sets.** `--direct` writes to `val_rules` without needing
+the backend up; drop it to go through the API instead.
+
+```bash
+python seed_rules_b2b.py --direct
+python seed_rules_account.py --direct
+```
+
+Expect **40 rules, ids 1–40** — 20 B2B (all 9 rule types) and 20 Account
+(7 types; referential integrity needs a second object and range needs a
+numeric column, so neither applies to Account).
+
+**3. Start the backend, then run from the UI:**
+
+```bash
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+- **Runs → MySQL → the four B2B objects → start** — that becomes run #1
+- **Runs → MySQL → Account only → start** — run #2
+
+**4. Confirm the queries still agree with the engine:**
+
+```bash
+python test_violation_query.py
+```
+
+Must print `40 match, 0 wrong`. It generates every rule's violation query,
+runs it against `source_db`, and compares the row count to what the engine
+recorded. Non-zero exit if any disagree.
+
+### Numbers from a clean rebuild
+
+| | Run #1 (B2B) | Run #2 (Account) |
+|---|---|---|
+| Overall DQ Score | 92.7% | 75.6% |
+| Objects | 4 | 1 |
+| CDEs checked | 13 of 17 | 16 of 16 |
+| Records scanned | 128 | 10 |
+| Records affected | 53 | 10 |
+| Critical failed | 38 | 7 |
+| Rule coverage | 76.5% | 100% |
+
+Account's 10-row sample lives in `extra/acc.csv`; load it with
+`python prepare_account.py ../extra/acc.csv`. On the office laptop point that
+at the real 650 MB export instead.
 
 ## Adding Account (the 650 MB export)
 
@@ -98,7 +167,7 @@ python prepare_account.py "C:\path\accounts.csv"
 from a 580 MB file. Do NOT use the Workbench import wizard — it is what put
 CSV header rows into `b2bproduct` and `b2bsbg` as data.
 
-**C. Load the 25 Account rules:**
+**C. Load the 20 Account rules:**
 
 ```bash
 python seed_rules_account.py            # backend running
@@ -109,7 +178,7 @@ python seed_rules_account.py --direct   # backend not running
 That becomes its own run, separate from the b2b run.
 
 Expected: Rule Coverage **100% (16 of 16 elements)** — Account declares 16 CDEs
-and all 25 rules together judge every one. Coverage is scoped to the objects in
+and the 20 rules judge every one. Coverage is scoped to the objects in
 the selected run, so an Account-only run is measured against Account's 16
 columns, not against all 33 across both datasets.
 

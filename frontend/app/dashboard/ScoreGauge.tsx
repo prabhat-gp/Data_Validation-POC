@@ -42,11 +42,11 @@ export default function ScoreGauge({
                 fill="none" stroke="var(--crit)" strokeWidth="16" strokeLinecap="round" />
         )}
         <text x={CX} y="90" textAnchor="middle" fill="var(--crit)"
-              style={{ fontSize: 38, fontWeight: 800, letterSpacing: "-1px" }}>
+              style={{ fontSize: 38, fontWeight: 500, letterSpacing: "normal" }}>
           {crit.toFixed(1)}%
         </text>
         <text x={CX} y="117" textAnchor="middle" fill="var(--crit)"
-              style={{ fontSize: 12, fontWeight: 800, letterSpacing: "1.5px" }}>
+              style={{ fontSize: 12, fontWeight: 500, letterSpacing: "normal" }}>
           CRITICAL
         </text>
       </svg>

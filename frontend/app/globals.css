@@ -1,3 +1,5 @@
+@import "./tokens.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -9,6 +11,24 @@
      3. :root[data-theme="..."]      -> explicit user choice always wins
    RAG thresholds stay as approved: >90 green, 80-90 amber, <80 red.
 --------------------------------------------------------------------- */
+/* ---------------- brand font ----------------
+   honeywellaerospace.com uses PP Telegraf. It is a commercial Pangram Pangram
+   licence that Honeywell holds and that cannot be redistributed here, so
+   public/fonts/ ships EMPTY -- see the README in that folder.
+
+   Drop the four .woff2 files in with the names below and the real face takes
+   over on the next reload, no code change. Missing weights just fall through.
+   Until the files are there the stack lands on the OS sans-serif; nothing here
+   substitutes a different typeface and calls it the brand. */
+@font-face { font-family: "PP Telegraf"; font-weight: 300; font-style: normal; font-display: swap;
+  src: url("/fonts/PPTelegraf-Light.woff2") format("woff2"); }
+@font-face { font-family: "PP Telegraf"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("/fonts/PPTelegraf-Regular.woff2") format("woff2"); }
+@font-face { font-family: "PP Telegraf"; font-weight: 500; font-style: normal; font-display: swap;
+  src: url("/fonts/PPTelegraf-Medium.woff2") format("woff2"); }
+@font-face { font-family: "PP Telegraf"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("/fonts/PPTelegraf-Bold.woff2") format("woff2"); }
+
 :root {
   /* Honeywell AEROSPACE (post-June-2026 spin-off, ticker HONA) -- NOT the
      Honeywell Technologies red. Sampled from honeywellaerospace.com:
@@ -16,23 +36,32 @@
        neutrals        #1e1e25 / #303030 / #777e80 / #ced4da  (silver accents)
      Brand is orange + neutrals only, so greys carry the structure and orange
      is reserved for identity and interaction. */
-  --bg: #f4f5f6; --panel: #fff; --panel-2: #f7f8f9; --sidebar: #fff;
-  --ink: #1e1e25; --ink-soft: #5a6063; --ink-faint: #777e80;
-  --line: #ced4da; --line-soft: #e6e9ec;
-  --accent: #ff4400; --accent-soft: #fff0eb; --accent-ink: #cc3600;
-  --good: #1f9d57; --good-bg: #e4f5ec; --warn: #c98510; --warn-bg: #fbf1dd;
-  --crit: #d9342b; --crit-bg: #fdeae8; --violet: #495057; --violet-bg: #eceef0;
-  --shadow: 0 1px 2px rgba(30,30,37,.05), 0 4px 16px rgba(30,30,37,.05);
-  --shadow-lg: 0 2px 4px rgba(30,30,37,.06), 0 12px 32px rgba(30,30,37,.10);
+  /* Honeywell Aerospace palette. Sampled from the official component set:
+       #1e1e25 text · #4d5761 secondary · #777e80 muted · #d2d6db border
+       #ff4f00 accent · #ffcdb6 accent-soft · #b54708 accent-ink
+       #067647 success · #b54708 warning · #d31d10 error · #006b8c info */
+  --bg: #f8f8f8; --panel: #ffffff;
+  --panel-2: #f3f4f6; --sidebar: #ffffff;
+  --ink: #1e1e25; --ink-soft: #4d5761;
+  --ink-faint: #777e80;
+  --line: #d2d6db; --line-soft: #eaebeb;
+  --accent: #ff4f00; --accent-soft: #ffcdb6;
+  --accent-ink: #b54708;
+  --good: #067647; --good-bg: #e6f4ed;
+  --warn: #b54708; --warn-bg: #fdf0e6;
+  --crit: #d31d10; --crit-bg: #fdeae8;
+  --violet: #006b8c; --violet-bg: #e6f1f5;
+  --shadow: 0 1px 3px #0a0d121a, 0 1px 2px #0a0d120f;
+  --shadow-lg: 0 4px 6px #0a0d1208, 0 12px 16px #0a0d120a;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #131318; --panel: #1e1e25; --panel-2: #26262e; --sidebar: #17171c;
-    --ink: #f0f1f2; --ink-soft: #b4b9bb; --ink-faint: #8b9296;
+    --ink: #f0f1f2; --ink-soft: #b4b9bb; --ink-faint: #a2a6a8;
     --line: #383840; --line-soft: #2b2b33;
-    --accent: #ff5c1f; --accent-soft: #3a1a0d; --accent-ink: #ff8552;
+    --accent: #ff4f00; --accent-soft: #3a1a0d; --accent-ink: #ffcdb6;
     --good: #3ecb7f; --good-bg: #102c20; --warn: #e0a83c; --warn-bg: #2e240f;
-    --crit: #f2564a; --crit-bg: #3a1614; --violet: #b4b9bb; --violet-bg: #2b2b33;
+    --crit: #f2564a; --crit-bg: #3a1614; --violet: #4aa8c4; --violet-bg: #12303a;
     --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
     --shadow-lg: 0 2px 4px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.45);
   }
@@ -48,8 +77,38 @@
   --shadow-lg: 0 2px 4px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.45);
 }
 
+/* Type scale from the Honeywell Aerospace application component set:
+     14/500  dominant UI text   16/500  secondary   12/500  small labels
+     700     headings and display numbers
+   Note this is the APPLICATION scale. Honeywell's marketing pages use light
+   300-weight hero type; that reads washed out across a dense dashboard. */
+:root {
+  /* ====================== THE FONT STACK — EDIT HERE ======================
+     PP Telegraf is what honeywellaerospace.com uses. It is FIRST, so wherever
+     it is available the app renders in the real brand face.
+
+     It resolves from either:
+       (a) PP Telegraf installed on the machine — likely on a corporate build
+           that has the Honeywell licence; nothing to do, it just works, or
+       (b) the four .woff2 files dropped into frontend/public/fonts/ — the
+           @font-face rules at the top of this file already point there.
+           See public/fonts/README.md for the exact filenames.
+
+     Where neither is present it falls through to Honeywell Sans, then the OS
+     sans-serif. No third-party typeface is substituted in its place.
+     ====================================================================== */
+  --font-brand: "PP Telegraf", "PP Telegraf Regular", "Honeywell Sans",
+                -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                Helvetica, Arial, sans-serif;
+}
+
 * { box-sizing: border-box; }
-body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+body {
+  background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased;
+  font-family: var(--font-brand);
+  /* dominant UI text: 14px / 500 */
+  font-size: 14px; font-weight: 500; line-height: 1.45; letter-spacing: normal;
+}
 .tnum { font-variant-numeric: tabular-nums; }
 
 /* ---------------- app shell ----------------
@@ -66,24 +125,27 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 .brand .mark {
   width: 34px; height: 34px; border-radius: 9px; flex: none;
   background: linear-gradient(135deg, var(--accent), #ff7a3d);
-  display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 15px;
+  display: grid; place-items: center; color: #fff; font-weight: 500; font-size: 15px;
   box-shadow: var(--shadow);
 }
-.brand .bt { font-size: 13.5px; font-weight: 800; letter-spacing: -.01em; line-height: 1.15; }
+.brand .bt { font-size: 13.5px; font-weight: 700; letter-spacing: normal; line-height: 1.15; }
 .brand .bs { font-size: 10.5px; color: var(--ink-faint); margin-top: 1px; }
 
 .nav { display: flex; flex-direction: column; gap: 4px; margin: auto 0; }
+/* matches the site's utility nav (CONTACT US / AOG): 12px, weight 500,
+   uppercase, letter-spacing NORMAL, #777e80. The old 10px/700/.09em was the
+   single biggest thing making this look unlike the brand. */
 .nav-label {
-  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .09em;
+  font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: normal;
   color: var(--ink-faint); padding: 0 10px 8px;
 }
 .nav a {
   display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 9px;
-  font-size: 13.5px; font-weight: 600; color: var(--ink-soft); text-decoration: none;
-  position: relative; transition: background .12s, color .12s;
+  font-size: 13.5px; font-weight: 500; color: var(--ink-soft);
+  text-decoration: none; position: relative; transition: background .12s, color .12s;
 }
 .nav a:hover { background: var(--panel-2); color: var(--ink); }
-.nav a.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
+.nav a.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; letter-spacing: -.02em; }
 .nav a.active::before {
   content: ""; position: absolute; left: -14px; top: 50%; transform: translateY(-50%);
   width: 3px; height: 20px; border-radius: 0 3px 3px 0; background: var(--accent);
@@ -98,7 +160,7 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 .theme-toggle {
   display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 9px;
   border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-soft);
-  font-size: 12.5px; font-weight: 600; cursor: pointer; width: 100%;
+  font-size: 12.5px; font-weight: 500; cursor: pointer; width: 100%;
 }
 .theme-toggle:hover { color: var(--ink); border-color: var(--accent); }
 .theme-toggle svg { width: 15px; height: 15px; }
@@ -108,16 +170,16 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
   display: flex; align-items: center; gap: 16px; padding: 18px 26px;
   border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 10;
 }
-.topbar h1 { font-size: 19px; font-weight: 800; letter-spacing: -.02em; margin: 0; }
-.topbar .sub { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px; }
+.topbar h1 { font-size: 20px; font-weight: 700; letter-spacing: normal; margin: 0; }
+.topbar .sub { font-size: 11.5px; font-weight: 400; color: var(--ink-faint); margin-top: 1px; }
 .topbar .spacer { margin-left: auto; }
 .content { padding: 22px 26px 60px; }
 
 /* ---------------- filters ---------------- */
 .flt { display: flex; flex-direction: column; gap: 4px; }
-.flt .fl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-faint); font-weight: 700; }
+.flt .fl { font-size: 9.5px; text-transform: uppercase; letter-spacing: normal; color: var(--ink-faint); font-weight: 500; }
 .flt select, .input {
-  font-size: 12.5px; font-weight: 600; color: var(--ink); background: var(--panel);
+  font-size: 12.5px; font-weight: 500; color: var(--ink); background: var(--panel);
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 11px;
 }
 .flt select { font-family: ui-monospace, monospace; }
@@ -143,9 +205,12 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 .kpi:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
 .kpi:not(.kpi-gauge) { justify-content: center; }
 .kpi { display: flex; flex-direction: column; }
-.kpi .lab { font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin-bottom: 8px; }
-.kpi .val { font-size: 27px; font-weight: 800; letter-spacing: -.025em; line-height: 1; }
-.kpi .sub { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
+.kpi .lab {
+  font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: normal;
+  color: var(--ink-faint); margin-bottom: 8px;
+}
+.kpi .val { font-size: 27px; font-weight: 700; letter-spacing: normal; line-height: 1; }
+.kpi .sub { font-size: 11.5px; font-weight: 400; color: var(--ink-faint); margin-top: 6px; }
 .kpi .strip { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; }
 .s-good { background: var(--good); } .s-warn { background: var(--warn); }
 .s-crit { background: var(--crit); } .s-acc { background: var(--accent); }
@@ -162,8 +227,8 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
      the viewport. */
   min-height: 0; min-width: 0;
 }
-.panel h4 { margin: 0 0 13px; font-size: 13px; font-weight: 750; display: flex; align-items: center; gap: 8px; flex: none; }
-.panel h4 .hint { margin-left: auto; font-size: 10.5px; color: var(--ink-faint); font-weight: 500; }
+.panel h4 { margin: 0 0 13px; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex: none; }
+.panel h4 .hint { margin-left: auto; font-size: 10.5px; color: var(--ink-faint); font-weight: 400; }
 
 /* ---------------- heatmap ---------------- */
 /* table-layout:fixed + explicit widths -- otherwise the longest header
@@ -171,14 +236,14 @@ body { background: var(--bg); color: var(--ink); -webkit-font-smoothing: antiali
 table.heat { border-collapse: separate; border-spacing: 3px; width: 100%; font-size: 11.5px; table-layout: fixed; }
 table.heat th.obj, table.heat td.obj { width: 27%; }
 table.heat th:not(.obj) { width: 10.4%; }
-table.heat th { font-weight: 700; color: var(--ink-faint); font-size: 8.5px; text-align: center; padding: 2px 0 4px; text-transform: uppercase; letter-spacing: 0; line-height: 1.2; }
+table.heat th { font-weight: 500; color: var(--ink-faint); font-size: 8.5px; text-align: center; padding: 2px 0 4px; text-transform: uppercase; letter-spacing: 0; line-height: 1.2; }
 table.heat th.obj { text-align: left; }
-table.heat td.obj { text-align: left; font-weight: 650; font-size: 12px; padding-right: 8px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.heat td.obj { text-align: left; font-weight: 500; font-size: 12px; padding-right: 8px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 table.heat tr.clk { cursor: pointer; }
 table.heat tr.clk:hover td.obj { color: var(--accent); }
 table.heat tr.clk:hover td.cell { transform: scale(1.04); }
 table.heat td.cell {
-  text-align: center; border-radius: 6px; padding: 8px 2px; font-weight: 750;
+  text-align: center; border-radius: 6px; padding: 8px 2px; font-weight: 500;
   font-family: ui-monospace, monospace; font-size: 11.5px; cursor: pointer; transition: transform .1s;
 }
 .c-good { background: var(--good-bg); color: var(--good); }
@@ -187,44 +252,55 @@ table.heat td.cell {
 .c-ovr { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ---------------- donut ---------------- */
-.gauge { display: flex; align-items: center; gap: 20px; padding: 6px 2px; flex: 1; }
+/* Donut + legend. Side by side by default -- that is what the wide overview
+   panels want and it was already right there.
+   `.vertical` stacks the legend under the ring, for the NARROW drilldown panel
+   where a 6-row legend beside a 138px ring is cramped. */
+.gauge { display: flex; align-items: center; gap: 20px; padding: 6px 2px; }
 .ring { width: 138px; height: 138px; border-radius: 50%; flex: none; display: grid; place-items: center; position: relative; }
 .ring::after { content: ""; position: absolute; inset: 17px; background: var(--panel); border-radius: 50%; }
 .ring .rc { position: relative; z-index: 1; text-align: center; line-height: 1.1; }
-.ring .rc .n { font-size: 24px; font-weight: 800; letter-spacing: -.02em; }
-.ring .rc .t { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-faint); margin-top: 3px; }
+.ring .rc .n { font-size: 24px; font-weight: 700; letter-spacing: normal; }
+.ring .rc .t { font-size: 9px; text-transform: uppercase; letter-spacing: normal; color: var(--ink-faint); margin-top: 3px; }
 /* label left, value right -- one line each, as in the approved mock */
 .legend { display: flex; flex-direction: column; gap: 11px; flex: 1; min-width: 0; }
 .legend .li { display: grid; grid-template-columns: 11px 1fr auto; align-items: center; gap: 10px; }
+
+/* stacked variant -- ring on top, legend as its own block beneath a rule */
+.gauge.vertical { flex-direction: column; align-items: center; gap: 0; padding: 4px 2px 2px; }
+.gauge.vertical .legend {
+  width: 100%; flex: none; gap: 9px;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft);
+}
 .legend .sw { width: 11px; height: 11px; border-radius: 3px; }
-.legend .ln { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.legend b { font-family: ui-monospace, monospace; font-size: 11.5px; font-weight: 700; color: var(--ink-soft); white-space: nowrap; }
+.legend .ln { font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legend b { font-family: ui-monospace, monospace; font-size: 11.5px; font-weight: 500; color: var(--ink-soft); white-space: nowrap; }
 
 /* ---------------- lists / tables ---------------- */
 .flist { display: flex; flex-direction: column; flex: 1; }
 .frow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; }
 .frow:last-child { border-bottom: none; }
-.frow .fname { font-weight: 650; color: var(--ink); }
+.frow .fname { font-weight: 500; color: var(--ink); }
 .frow .fname small { display: block; font-size: 10.5px; font-weight: 500; color: var(--ink-faint); margin-top: 1px; }
-.frow .fscore { font-family: ui-monospace, monospace; font-weight: 800; font-size: 14px; flex: none; }
+.frow .fscore { font-family: ui-monospace, monospace; font-weight: 700; font-size: 14px; flex: none; }
 
 .fixsplit { display: flex; flex-direction: column; gap: 11px; flex: 1; justify-content: center; }
 .fixnums { display: flex; justify-content: space-between; align-items: baseline; }
-.fixnums .fn .v { font-size: 25px; font-weight: 800; letter-spacing: -.02em; line-height: 1; }
-.fixnums .fn .l { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); margin-top: 3px; }
+.fixnums .fn .v { font-size: 25px; font-weight: 700; letter-spacing: normal; line-height: 1; }
+.fixnums .fn .l { font-size: 10.5px; font-weight: 500; text-transform: uppercase; letter-spacing: normal; color: var(--ink-faint); margin-top: 3px; }
 .fixnums .fn.right { text-align: right; }
 .fixbar { height: 15px; border-radius: 8px; overflow: hidden; display: flex; background: var(--line-soft); }
 .fixbar .seg { height: 100%; }
 .fixcounts { font-size: 11px; color: var(--ink-faint); text-align: center; line-height: 1.5; }
 
 .cde { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.cde th { text-align: left; font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); font-weight: 700; padding: 0 10px 9px; border-bottom: 1px solid var(--line); }
+.cde th { text-align: left; font-size: 9.5px; text-transform: uppercase; letter-spacing: normal; color: var(--ink-faint); font-weight: 500; padding: 0 10px 9px; border-bottom: 1px solid var(--line); }
 .cde td { padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
 .cde tr:last-child td { border-bottom: none; }
 .cde tbody tr:hover { background: var(--panel-2); }
-.cde .el { font-family: ui-monospace, monospace; font-weight: 650; color: var(--ink); }
-.cde .sc { font-family: ui-monospace, monospace; font-weight: 750; }
-.badge { font-size: 9.5px; font-weight: 800; padding: 3px 8px; border-radius: 5px; text-transform: uppercase; letter-spacing: .04em; }
+.cde .el { font-family: ui-monospace, monospace; font-weight: 500; color: var(--ink); }
+.cde .sc { font-family: ui-monospace, monospace; font-weight: 500; }
+.badge { font-size: 9.5px; font-weight: 500; padding: 3px 8px; border-radius: 5px; text-transform: uppercase; letter-spacing: normal; }
 .b-crit { background: var(--crit-bg); color: var(--crit); }
 .b-warn { background: var(--warn-bg); color: var(--warn); }
 .b-draft { background: var(--line-soft); color: var(--ink-soft); }
@@ -232,18 +308,18 @@ table.heat td.cell {
 .b-appr { background: var(--good-bg); color: var(--good); }
 .b-rej { background: var(--crit-bg); color: var(--crit); }
 
-.backbtn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700; color: var(--accent-ink); background: var(--accent-soft); border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.backbtn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 500; color: var(--accent-ink); background: var(--accent-soft); border: none; border-radius: 9999px; padding: 8px 16px; cursor: pointer; }
 .backbtn:hover { filter: brightness(1.05); }
 .crumb { font-size: 12px; color: var(--ink-faint); font-family: ui-monospace, monospace; }
 .crumb b { color: var(--accent-ink); }
 .mini { font-size: 11.5px; color: var(--ink-soft); line-height: 1.5; }
 
-.btn-primary { padding: 9px 17px; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 650; font-size: 13px; border: none; cursor: pointer; }
+.btn-primary { padding: 9px 20px; border-radius: 9999px; background: var(--accent); color: #fff; font-weight: 500; font-size: 13px; border: none; cursor: pointer; }
 .btn-primary:hover { filter: brightness(1.08); }
-.btn-ghost { padding: 9px 15px; border-radius: 9px; border: 1px solid var(--violet); color: var(--violet); background: var(--violet-bg); font-weight: 650; font-size: 13px; cursor: pointer; }
+.btn-ghost { padding: 9px 18px; border-radius: 9999px; border: 1px solid var(--line); color: var(--ink-soft); background: transparent; font-weight: 500; font-size: 13px; cursor: pointer; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); }
-.card h2 { font-size: 15px; font-weight: 750; margin: 0 0 14px; }
+.card h2 { font-size: 15px; font-weight: 500; margin: 0 0 14px; }
 
 /* form action row -- its own line, clearly separated from the fields above
    (previously the buttons sat flush under Severity and read as part of it) */
@@ -255,13 +331,13 @@ table.heat td.cell {
 /* per-rule-type explainer card (swaps as the Rule Type dropdown changes) */
 .guide-card { border-left: 3px solid var(--violet); }
 .guide-head { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; margin-bottom: 10px; }
-.guide-head h2 { font-size: 14px; font-weight: 750; }
+.guide-head h2 { font-size: 14px; font-weight: 500; }
 .guide-tag {
-  font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
+  font-size: 9.5px; font-weight: 500; text-transform: uppercase; letter-spacing: normal;
   color: var(--violet); background: var(--violet-bg); padding: 4px 9px; border-radius: 6px;
 }
 .guide-fill {
-  margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--violet);
+  margin-left: auto; font-size: 11.5px; font-weight: 500; color: var(--violet);
   background: none; border: 1px solid var(--violet); border-radius: 7px;
   padding: 6px 11px; cursor: pointer;
 }
@@ -269,7 +345,7 @@ table.heat td.cell {
 .guide-plain { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; margin: 0 0 12px; }
 .guide-row { display: grid; grid-template-columns: 74px 1fr; gap: 10px; align-items: baseline; padding: 6px 0; }
 .guide-lbl {
-  font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
+  font-size: 9.5px; font-weight: 500; text-transform: uppercase; letter-spacing: normal;
   color: var(--ink-faint);
 }
 .guide-val { font-size: 12.5px; color: var(--ink); }
@@ -306,8 +382,8 @@ table.heat td.cell {
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .fld label {
-  font-size: 9.5px; font-weight: 800; text-transform: uppercase;
-  letter-spacing: .06em; color: var(--ink-faint);
+  font-size: 9.5px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: normal; color: var(--ink-faint);
 }
 .fld select, .fld input, .txt {
   padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
@@ -319,8 +395,8 @@ table.heat td.cell {
   color: var(--ink); font-size: 12.5px; }
 .condrow .txt { flex: 1; min-width: 120px; }
 .thenrow { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.thenrow .lbl { font-size: 11px; font-weight: 800; text-transform: uppercase;
-  letter-spacing: .05em; color: var(--ink-faint); }
+.thenrow .lbl { font-size: 11px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: normal; color: var(--ink-faint); }
 .radio { display: flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; }
 
 .subpanel { border-radius: 10px; padding: 14px; margin-top: 16px; }
@@ -332,7 +408,7 @@ table.heat td.cell {
 .b-err { background: var(--crit-bg); color: var(--crit); border: 1px solid var(--crit); }
 .b-ok  { background: var(--good-bg); color: var(--good); border: 1px solid var(--good); }
 
-.btn-mini { font-size: 11.5px; font-weight: 700; padding: 5px 10px; border-radius: 7px;
+.btn-mini { font-size: 11.5px; font-weight: 500; padding: 5px 12px; border-radius: 9999px;
   border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
 .btn-mini:hover { background: var(--panel-2); }
 .btn-mini.ok { border-color: var(--good); color: var(--good); }
@@ -347,20 +423,20 @@ td.acts .btns { display: flex; gap: 6px; align-items: center; }
 /* ---------------- runs page ---------------- */
 .tabs { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--line-soft); }
 .tab { padding: 9px 15px; border: none; background: none; cursor: pointer;
-  font-size: 13px; font-weight: 700; color: var(--ink-faint); border-bottom: 2px solid transparent; }
+  font-size: 13px; font-weight: 500; color: var(--ink-faint); border-bottom: 2px solid transparent; }
 .tab.on { color: var(--accent); border-bottom-color: var(--accent); }
 .srcrow { display: flex; align-items: center; gap: 12px; }
-.srcval { font-size: 13px; font-weight: 700; }
+.srcval { font-size: 13px; font-weight: 500; }
 .entrow { display: flex; align-items: center; gap: 10px; padding: 9px 2px;
   border-bottom: 1px solid var(--line-soft); cursor: pointer; }
 .entrow.off { opacity: .5; cursor: not-allowed; }
-.entrow .en { font-size: 13px; font-weight: 650; min-width: 130px; }
+.entrow .en { font-size: 13px; font-weight: 500; min-width: 130px; }
 
 .batch { border: 1px solid var(--line-soft); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
 .bhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .brow { display: flex; align-items: center; gap: 10px; padding: 6px 0 6px 14px;
   border-left: 2px solid var(--line-soft); margin-left: 4px; flex-wrap: wrap; }
-.brow .ent { font-size: 12.5px; font-weight: 650; min-width: 110px; }
+.brow .ent { font-size: 12.5px; font-weight: 500; min-width: 110px; }
 .brow .err { color: var(--crit); }
 
 /* ---------------- role / identity block in sidebar ---------------- */
@@ -368,7 +444,7 @@ td.acts .btns { display: flex; gap: 6px; align-items: center; }
 .whoami .txt.sm, .whoami select.sm { padding: 6px 8px; font-size: 12px; width: 100%; }
 .rolehint { font-size: 10.5px; color: var(--ink-faint); }
 .idchip {
-  font-size: 12px; font-weight: 700; padding: 6px 10px; border-radius: 7px;
+  font-size: 12px; font-weight: 500; padding: 6px 10px; border-radius: 7px;
   background: var(--panel-2); border: 1px solid var(--line-soft);
 }
 .idchip b { color: var(--accent); text-transform: uppercase; font-size: 10px; margin-left: 4px; }
@@ -382,7 +458,7 @@ select.sm, .txt.sm {
 .garc { width: 100%; max-width: 210px; height: auto; display: block; margin: 0 auto; }
 .glegend {
   display: flex; justify-content: center; gap: 16px; margin-top: 2px;
-  font-size: 11px; font-weight: 650; color: var(--ink-soft);
+  font-size: 11px; font-weight: 500; color: var(--ink-soft);
 }
 .glegend span { display: inline-flex; align-items: center; gap: 6px; }
 .glegend i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
@@ -391,9 +467,9 @@ select.sm, .txt.sm {
   margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft);
 }
 .gstat { text-align: center; }
-.gstat .v { font-size: 16px; font-weight: 800; font-family: ui-monospace, monospace; }
+.gstat .v { font-size: 16px; font-weight: 700; font-family: ui-monospace, monospace; }
 .gstat .l {
-  font-size: 9px; text-transform: uppercase; letter-spacing: .05em;
+  font-size: 9px; text-transform: uppercase; letter-spacing: normal;
   color: var(--ink-faint); margin-top: 2px;
 }
 
@@ -401,7 +477,7 @@ select.sm, .txt.sm {
 .checkrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .connpill {
   display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px;
-  padding: 5px 10px; border-radius: 20px; font-weight: 600;
+  padding: 5px 10px; border-radius: 20px; font-weight: 500;
 }
 .connpill .dot { width: 8px; height: 8px; border-radius: 50%; }
 .connpill.ok { background: var(--good-bg); color: var(--good); }
@@ -419,9 +495,9 @@ select.sm, .txt.sm {
 .sec-head {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
 }
-.sec-head h2 { margin: 0; font-size: 15px; font-weight: 750; }
+.sec-head h2 { margin: 0; font-size: 15px; font-weight: 500; }
 .sec-head .count {
-  font-size: 11px; font-weight: 700; color: var(--ink-faint);
+  font-size: 11px; font-weight: 500; color: var(--ink-faint);
   background: var(--panel-2); border: 1px solid var(--line-soft);
   padding: 3px 9px; border-radius: 20px;
 }
@@ -441,15 +517,15 @@ select.sm, .txt.sm {
 .bprog .fill { height: 100%; background: var(--accent); transition: width .4s ease; }
 .bprog .cap {
   display: flex; justify-content: space-between; margin-top: 5px;
-  font-size: 10.5px; color: var(--ink-faint); font-weight: 600;
+  font-size: 10.5px; color: var(--ink-faint); font-weight: 500;
 }
 .bprog .cap .now { color: var(--accent); }
 
 /* ---------------- match ALL/ANY segmented toggle ---------------- */
 .matchrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .matchrow .lbl {
-  font-size: 10px; font-weight: 800; text-transform: uppercase;
-  letter-spacing: .05em; color: var(--ink-faint);
+  font-size: 9.5px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: normal; color: var(--ink-faint);
 }
 .seg {
   display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
@@ -457,7 +533,7 @@ select.sm, .txt.sm {
 }
 .seg button {
   border: none; background: none; cursor: pointer; padding: 6px 13px;
-  font-size: 12px; font-weight: 650; color: var(--ink-soft); font-family: inherit;
+  font-size: 12px; font-weight: 500; color: var(--ink-soft); font-family: inherit;
 }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: var(--accent); color: #fff; }
@@ -483,7 +559,7 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
   border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft);
-  border-radius: 20px; padding: 5px 12px; font-size: 11.5px; font-weight: 650;
+  border-radius: 20px; padding: 5px 12px; font-size: 11.5px; font-weight: 500;
   cursor: pointer; font-family: inherit;
 }
 .chip:hover { border-color: var(--accent); }
@@ -505,7 +581,7 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 }
 .menu button {
   text-align: left; border: none; background: none; cursor: pointer;
-  padding: 8px 11px; border-radius: 7px; font-size: 12.5px; font-weight: 600;
+  padding: 8px 11px; border-radius: 7px; font-size: 12.5px; font-weight: 500;
   color: var(--ink); font-family: inherit;
 }
 .menu button:hover { background: var(--panel-2); }
@@ -530,7 +606,7 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 .rc-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 14px; }
 .rc-head b { font-size: 14.5px; flex: 1; min-width: 0; }
 .rc-id {
-  font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700;
+  font-family: ui-monospace, monospace; font-size: 11px; font-weight: 500;
   color: var(--accent); background: var(--accent-soft); padding: 3px 8px; border-radius: 6px;
 }
 .rc-x {
@@ -543,10 +619,10 @@ table.cde tbody tr:hover { background: var(--panel-2); }
   padding: 14px 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);
 }
 .rc-grid > span {
-  font-size: 9.5px; font-weight: 800; text-transform: uppercase;
-  letter-spacing: .05em; color: var(--ink-faint); padding-top: 3px;
+  font-size: 9.5px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: normal; color: var(--ink-faint); padding-top: 3px;
 }
-.rc-grid > b { font-size: 13px; font-weight: 650; word-break: break-word; }
+.rc-grid > b { font-size: 13px; font-weight: 500; word-break: break-word; }
 .rc-grid code {
   font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--accent-ink);
   background: var(--panel-2); padding: 3px 7px; border-radius: 6px;
@@ -555,8 +631,8 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 .rc-foot { margin-top: 13px; font-size: 11.5px; color: var(--ink-soft); line-height: 1.8; }
 .rc-json { margin-top: 12px; }
 .rc-json summary {
-  cursor: pointer; font-size: 10.5px; font-weight: 700; color: var(--ink-faint);
-  text-transform: uppercase; letter-spacing: .05em;
+  cursor: pointer; font-size: 10.5px; font-weight: 500; color: var(--ink-faint);
+  text-transform: uppercase; letter-spacing: normal;
 }
 .rc-json pre {
   margin-top: 8px; font-size: 11px; background: var(--panel-2);
@@ -570,7 +646,7 @@ table.cde tbody tr.clickable:hover { background: var(--panel-2); }
 
 /* "multi-element" reads as a real label, not faded micro-text */
 .tag-multi {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+  font-size: 10.5px; font-weight: 500; letter-spacing: .02em;
   color: var(--violet); background: var(--violet-bg);
   padding: 3px 8px; border-radius: 6px; white-space: nowrap;
 }
@@ -585,10 +661,10 @@ table.cde tbody tr.clickable:hover { background: var(--panel-2); }
 }
 .chip-link {
   border: none; background: none; cursor: pointer; padding: 0;
-  font-size: 11.5px; font-weight: 700; color: var(--accent); font-family: inherit;
+  font-size: 11.5px; font-weight: 500; color: var(--accent); font-family: inherit;
 }
 .chip-link:hover { text-decoration: underline; }
-.chip-count { font-size: 11px; color: var(--ink-faint); font-weight: 600; }
+.chip-count { font-size: 11px; color: var(--ink-faint); font-weight: 500; }
 
 
 
@@ -600,7 +676,7 @@ td.acts-end { text-align: right; width: 44px; }
 th[aria-label="actions"] { width: 44px; }
 
 /* rule name is the human-readable identifier -- give it weight */
-td.rname { font-weight: 650; font-size: 12.5px; max-width: 220px;
+td.rname { font-weight: 500; font-size: 12.5px; max-width: 220px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* short one-idea-per-line notes instead of a run-on sentence */
@@ -612,40 +688,40 @@ th.th-acts { width: 44px; }
 /* Data Source picker in the sidebar */
 .src-pick { padding: 0 14px; margin-bottom: 18px; }
 .src-pick select {
-  width: 100%; padding: 8px 10px; font-size: 12.5px; font-weight: 650;
+  width: 100%; padding: 8px 10px; font-size: 12.5px; font-weight: 500;
   border: 1px solid var(--line); border-radius: 8px;
   background: var(--panel); color: var(--ink); font-family: inherit;
 }
-.brand .bt { font-size: 13.5px; font-weight: 750; line-height: 1.25; }
+.brand .bt { font-size: 13.5px; font-weight: 700; line-height: 1.25; }
 
 /* per-entity run progress */
 .prog-list { display: flex; flex-direction: column; gap: 7px; margin: 10px 0 4px; }
 .prog-row { display: grid; grid-template-columns: 120px 1fr 42px auto; gap: 10px; align-items: center; }
-.pr-ent { font-size: 12px; font-weight: 650; }
+.pr-ent { font-size: 12px; font-weight: 500; }
 .pr-track { height: 7px; border-radius: 20px; background: var(--panel-2);
   border: 1px solid var(--line-soft); overflow: hidden; }
 .pr-fill { height: 100%; background: var(--accent); transition: width .35s ease; }
 .pr-fill.ok { background: var(--good); }
 .pr-fill.bad { background: var(--crit); }
-.pr-pct { font-size: 11px; font-weight: 700; font-family: ui-monospace, monospace;
+.pr-pct { font-size: 11px; font-weight: 500; font-family: ui-monospace, monospace;
   text-align: right; color: var(--ink-soft); }
 .pr-lab { font-size: 10.5px; color: var(--ink-faint); white-space: nowrap; }
 
 /* "in this run" block inside the rule modal */
 .rc-result { background: var(--panel-2); border: 1px solid var(--line-soft);
   border-radius: 10px; padding: 11px 13px; margin-bottom: 14px; }
-.rcr-head { font-size: 9.5px; font-weight: 800; text-transform: uppercase;
-  letter-spacing: .06em; color: var(--ink-faint); margin-bottom: 8px; }
+.rcr-head { font-size: 9.5px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: normal; color: var(--ink-faint); margin-bottom: 8px; }
 .rcr-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .rcr-stats > div { display: flex; flex-direction: column; }
-.rcr-stats .v { font-size: 17px; font-weight: 800; font-family: ui-monospace, monospace; }
-.rcr-stats .l { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em;
+.rcr-stats .v { font-size: 17px; font-weight: 700; font-family: ui-monospace, monospace; }
+.rcr-stats .l { font-size: 9.5px; text-transform: uppercase; letter-spacing: normal;
   color: var(--ink-faint); margin-top: 2px; }
 
-/* six KPI cards across -- tighten so labels and values do not wrap */
+/* six across -- one line each, no wrapping, same box as before */
 .k6 .kpi { padding: 13px 12px; min-width: 0; }
 .k6 .kpi .lab, .k6 .kpi .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.k6 .kpi .lab { font-size: 10.5px; letter-spacing: .03em; }
+.k6 .kpi .lab { font-size: 10px; }
 .k6 .kpi .val { font-size: 25px; }
 .k6 .kpi .sub { font-size: 11px; }
 /* six across down to ~1200px; below that fall to 3, then 2 */
@@ -656,10 +732,10 @@ th.th-acts { width: 44px; }
 /* the object picker sits hard right so switching object is one click, not a
    trip back to the overview and in again */
 .crumbjump { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.crumbjump .fl { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em;
-  color: var(--ink-faint); font-weight: 700; }
+.crumbjump .fl { font-size: 9.5px; text-transform: uppercase; letter-spacing: normal;
+  color: var(--ink-faint); font-weight: 500; }
 .crumbjump select {
-  font-size: 12.5px; font-weight: 700; color: var(--ink); background: var(--panel);
+  font-size: 12.5px; font-weight: 500; color: var(--ink); background: var(--panel);
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 11px; cursor: pointer;
 }
 .crumbjump select:hover { border-color: var(--accent); }
@@ -667,7 +743,39 @@ th.th-acts { width: 44px; }
 
 /* "set by rule type" -- marks a modal value as derived, not editable */
 .rc-derived {
-  font-size: 9.5px; font-weight: 600; color: var(--ink-faint);
+  font-size: 9.5px; font-weight: 500; color: var(--ink-faint);
   background: var(--panel-2); border: 1px solid var(--line-soft);
   border-radius: 5px; padding: 1px 6px; margin-left: 8px; white-space: nowrap;
 }
+
+/* ---------------- Honeywell Aerospace lockup (top of sidebar) ---------------- */
+.aero-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 8px 16px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.aero-mark { color: var(--accent); flex: none; }
+.aero-word { display: flex; flex-direction: column; line-height: 1.14; }
+.aero-word span {
+  font-size: 14.5px; font-weight: 700; letter-spacing: normal; color: var(--ink);
+}
+
+/* ---------------- brand weight ceiling ----------------
+   honeywellaerospace.com uses 300-500 throughout; 700 appears only on the
+   ACTIVE nav item. Browsers render <b>/<strong> at 700 by default, which is
+   why rule values, table names and legend figures looked heavier than
+   anything on the real site. */
+b, strong { font-weight: 700; }
+
+/* ---------------- "show the failing rows" query block ---------------- */
+.rc-json.vq summary { color: var(--accent-ink); }
+.vq-hint { font-size: 10.5px; color: var(--ink-faint); font-weight: 400; }
+.vq-head { display: flex; align-items: center; gap: 12px; margin: 10px 0 8px; }
+.vq-head .mini { flex: 1; }
+.vq-sql {
+  background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: var(--r-lg);
+  padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px; line-height: 1.65; color: var(--ink); white-space: pre;
+  overflow-x: auto; margin: 0;
+}
+.vq-foot { margin-top: 8px; color: var(--ink-faint); }

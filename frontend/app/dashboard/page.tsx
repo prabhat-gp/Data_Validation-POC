@@ -62,7 +62,7 @@ export default function DashboardPage() {
         </div>
         <div className="flt">
           <span className="fl">Run Date</span>
-          <span style={{ fontSize: 12.5, fontFamily: "ui-monospace, monospace", fontWeight: 700, paddingTop: 6 }}>
+          <span style={{ fontSize: 12.5, fontFamily: "ui-monospace, monospace", fontWeight: 500, paddingTop: 6 }}>
             {new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
           </span>
         </div>
@@ -131,7 +131,7 @@ function Overview({ onSelectObject, onObjects, batchId, source }: {
         <Kpi label="Objects Checked" value={kpis.objects_checked} strip="acc" sub="Critical Data Objects" />
         <Kpi label="CDEs Checked" value={kpis.cdes_checked} strip="acc" sub="Critical Data Elements" />
         <Kpi label="Records Scanned" value={fmt(kpis.records_scanned)} strip="acc" sub={`${kpis.objects_checked} objects · ${fmt(kpis.records_affected)} affected`} />
-        <Kpi label="Critical Failed Checks" value={fmt(kpis.critical_failed_checks)} strip="crit" sub={`of ${fmt(kpis.checks_run)} checks run`} />
+        <Kpi label="Critical Failed Checks" value={fmt(kpis.critical_failed_checks)} strip="crit" sub={`of ${fmt(kpis.checks_failed)} failed checks`} />
         <Kpi label="Rule Coverage" value={`${kpis.rule_coverage_pct}%`} strip="acc" sub={`${kpis.cdes_checked} of ${kpis.elements_declared} elements`} />
       </div>
 
@@ -247,9 +247,11 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
         <Kpi label="Failing Checks" value={fmt(totalFailed)} strip="warn" sub={`all severities · ${fmt(blockingFailed)} blocking`} />
       </div>
 
-      <div className="row" style={{ gridTemplateColumns: ".85fr 1.6fr" }}>
+      {/* alignItems:start -- the donut panel sizes to its own content instead of
+          being stretched to the height of the elements table next to it */}
+      <div className="row" style={{ gridTemplateColumns: ".85fr 1.6fr", alignItems: "start" }}>
         <div className="panel">
-          <h4>Dimension Breakdown</h4>
+          <h4>Dimension Breakdown <span className="hint">{dims.length} dimensions</span></h4>
           <DonutChart
             segments={dims
               .map(([dim]) => ({
@@ -259,6 +261,7 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
               .sort((a, b) => b.value - a.value)}
             centerValue={`${data.overall_score}%`}
             centerLabel="OVERALL"
+            vertical
           />
         </div>
         <div className="panel">

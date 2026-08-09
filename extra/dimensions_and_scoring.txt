@@ -292,3 +292,54 @@ Every card carries its own denominator so the wrong division is not available:
     Records Scanned           128   "4 objects - 56 affected"
     Critical Failed Checks     38   "Critical + Error - of 890 checks"
     Rule Coverage           76.5%   "13 CDEs have rules"
+
+
+--------------------------------------------------------------------------------
+ PART 6 - "SHOW THE FAILING ROWS"
+--------------------------------------------------------------------------------
+
+Every rule modal has a "Show the failing rows" block: SQL the user can paste
+straight into their own client to see the records that failed.
+
+WHY IT IS NOT THE ENGINE'S SQL
+    rule_compiler.py targets the STAGING tables in target_db -- it selects
+    `record_key`, filters `run_id`, and joins other staging tables. None of
+    that exists in the user's source database, so its SQL is unrunnable there.
+
+    app/violation_query.py emits the same LOGIC against the SOURCE tables:
+
+        stg_b2b_customer   ->  b2bcustomer        (source_object_name)
+        record_key         ->  customer_id        (primary_key_field)
+        WHERE run_id = :x  ->  dropped
+        :bound params      ->  inlined as literals, so it is copy-pasteable
+        + LIMIT 10
+
+    Each builder mirrors the compiler of the same name, predicate for
+    predicate. REFERENTIAL_INTEGRITY joins the referenced object's SOURCE
+    table on the real column (staging keeps that key in record_key, the source
+    has it as a normal column). AGGREGATION returns one row per failing GROUP,
+    since that is what its violation is.
+
+THE GUARANTEE, AND HOW IT IS ENFORCED
+    backend/test_violation_query.py generates every approved rule's query
+    UNCAPPED, runs it against source_db, and compares the row count to
+    val_metrics.records_failed for that rule in the latest run. They must be
+    equal. Non-zero exit if any disagree, so it can gate a deploy.
+
+    Verified 2026-08-09:
+        23/23 b2b rules      match   (all 9 rule types)
+        25/25 Account rules  match
+        48/48 total, 0 wrong
+
+    If a compiler changes and this module does not, the test fails loudly.
+    That matters more than it sounds: a query that disagrees with the engine
+    is worse than no query at all, because the user would go and fix the
+    wrong records.
+
+LIMITS
+    Capped at 10 rows -- this is for eyeballing what went wrong, not for
+    extracting a remediation list. The footer tells the user to remove the
+    LIMIT for the full set and states how many there are.
+
+    Read-only by construction: every builder emits a single SELECT.
+    The block is hidden entirely when a rule failed 0 records.
