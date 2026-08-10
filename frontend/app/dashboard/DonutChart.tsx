@@ -31,7 +31,7 @@ export default function DonutChart({
     <div className={`gauge ${vertical ? "vertical" : ""}`}>
       <div className="ring" style={{ background: `conic-gradient(${stops.join(",")})` }}>
         <div className="rc">
-          <div className="n tabular-nums">{centerValue}</div>
+          <div className="n tnum">{centerValue}</div>
           <div className="t">{centerLabel}</div>
         </div>
       </div>

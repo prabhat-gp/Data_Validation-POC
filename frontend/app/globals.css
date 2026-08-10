@@ -1,25 +1,4 @@
-@import "./tokens.css";
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* ---------------------------------------------------------------------
-   Design tokens. Three layers so the theme toggle actually works:
-     1. :root                        -> light defaults
-     2. @media prefers-color-scheme  -> follow the OS when set to "system"
-     3. :root[data-theme="..."]      -> explicit user choice always wins
-   RAG thresholds stay as approved: >90 green, 80-90 amber, <80 red.
---------------------------------------------------------------------- */
-/* ---------------- brand font ----------------
-   honeywellaerospace.com uses PP Telegraf. It is a commercial Pangram Pangram
-   licence that Honeywell holds and that cannot be redistributed here, so
-   public/fonts/ ships EMPTY -- see the README in that folder.
-
-   Drop the four .woff2 files in with the names below and the real face takes
-   over on the next reload, no code change. Missing weights just fall through.
-   Until the files are there the stack lands on the OS sans-serif; nothing here
-   substitutes a different typeface and calls it the brand. */
+/* brand font */
 @font-face { font-family: "PP Telegraf"; font-weight: 300; font-style: normal; font-display: swap;
   src: url("/fonts/PPTelegraf-Light.woff2") format("woff2"); }
 @font-face { font-family: "PP Telegraf"; font-weight: 400; font-style: normal; font-display: swap;
@@ -30,16 +9,10 @@
   src: url("/fonts/PPTelegraf-Bold.woff2") format("woff2"); }
 
 :root {
-  /* Honeywell AEROSPACE (post-June-2026 spin-off, ticker HONA) -- NOT the
-     Honeywell Technologies red. Sampled from honeywellaerospace.com:
-       sunrise orange  #ff4400  (the signature colour)
-       neutrals        #1e1e25 / #303030 / #777e80 / #ced4da  (silver accents)
-     Brand is orange + neutrals only, so greys carry the structure and orange
-     is reserved for identity and interaction. */
-  /* Honeywell Aerospace palette. Sampled from the official component set:
-       #1e1e25 text · #4d5761 secondary · #777e80 muted · #d2d6db border
-       #ff4f00 accent · #ffcdb6 accent-soft · #b54708 accent-ink
-       #067647 success · #b54708 warning · #d31d10 error · #006b8c info */
+  --font-brand: "PP Telegraf", "PP Telegraf Regular", "Honeywell Sans",
+                -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                Helvetica, Arial, sans-serif;
+
   --bg: #f8f8f8; --panel: #ffffff;
   --panel-2: #f3f4f6; --sidebar: #ffffff;
   --ink: #1e1e25; --ink-soft: #4d5761;
@@ -77,44 +50,15 @@
   --shadow-lg: 0 2px 4px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.45);
 }
 
-/* Type scale from the Honeywell Aerospace application component set:
-     14/500  dominant UI text   16/500  secondary   12/500  small labels
-     700     headings and display numbers
-   Note this is the APPLICATION scale. Honeywell's marketing pages use light
-   300-weight hero type; that reads washed out across a dense dashboard. */
-:root {
-  /* ====================== THE FONT STACK — EDIT HERE ======================
-     PP Telegraf is what honeywellaerospace.com uses. It is FIRST, so wherever
-     it is available the app renders in the real brand face.
-
-     It resolves from either:
-       (a) PP Telegraf installed on the machine — likely on a corporate build
-           that has the Honeywell licence; nothing to do, it just works, or
-       (b) the four .woff2 files dropped into frontend/public/fonts/ — the
-           @font-face rules at the top of this file already point there.
-           See public/fonts/README.md for the exact filenames.
-
-     Where neither is present it falls through to Honeywell Sans, then the OS
-     sans-serif. No third-party typeface is substituted in its place.
-     ====================================================================== */
-  --font-brand: "PP Telegraf", "PP Telegraf Regular", "Honeywell Sans",
-                -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                Helvetica, Arial, sans-serif;
-}
-
 * { box-sizing: border-box; }
 body {
   background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased;
   font-family: var(--font-brand);
-  /* dominant UI text: 14px / 500 */
   font-size: 14px; font-weight: 500; line-height: 1.45; letter-spacing: normal;
 }
 .tnum { font-variant-numeric: tabular-nums; }
 
-/* ---------------- app shell ----------------
-   Fixed-height shell with two INDEPENDENT scroll regions: the sidebar stays
-   put while only the main column scrolls. (A sticky sidebar inside a
-   body-scrolling grid drifted on scroll -- this is the robust pattern.) */
+/* app shell */
 .app-shell { display: grid; grid-template-columns: 248px 1fr; height: 100vh; overflow: hidden; }
 .sidebar {
   background: var(--sidebar); border-right: 1px solid var(--line);
@@ -132,9 +76,7 @@ body {
 .brand .bs { font-size: 10.5px; color: var(--ink-faint); margin-top: 1px; }
 
 .nav { display: flex; flex-direction: column; gap: 4px; margin: auto 0; }
-/* matches the site's utility nav (CONTACT US / AOG): 12px, weight 500,
-   uppercase, letter-spacing NORMAL, #777e80. The old 10px/700/.09em was the
-   single biggest thing making this look unlike the brand. */
+
 .nav-label {
   font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: normal;
   color: var(--ink-faint); padding: 0 10px 8px;
@@ -175,7 +117,7 @@ body {
 .topbar .spacer { margin-left: auto; }
 .content { padding: 22px 26px 60px; }
 
-/* ---------------- filters ---------------- */
+/* filters */
 .flt { display: flex; flex-direction: column; gap: 4px; }
 .flt .fl { font-size: 9.5px; text-transform: uppercase; letter-spacing: normal; color: var(--ink-faint); font-weight: 500; }
 .flt select, .input {
@@ -186,11 +128,11 @@ body {
 .input { width: 100%; }
 .input:focus, .flt select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
-/* ---------------- DQ score arc gauge (first KPI card) ---------------- */
+/* DQ score arc gauge (first KPI card) */
 .kpi-gauge { display: flex; flex-direction: column; }
 .kpi-gauge .arc { width: 100%; max-width: 190px; height: auto; display: block; margin: 2px auto 0; }
 
-/* ---------------- KPI cards ---------------- */
+/* KPI cards */
 .kpis { display: grid; gap: 12px; margin-bottom: 14px; }
 .k5 { grid-template-columns: repeat(5, 1fr); }
 .k6 { grid-template-columns: repeat(6, 1fr); }
@@ -217,22 +159,18 @@ body {
 .tone-good { color: var(--good); } .tone-warn { color: var(--warn); }
 .tone-crit { color: var(--crit); } .tone-acc { color: var(--accent); }
 
-/* ---------------- panels ---------------- */
+/* panels */
 .row { display: grid; gap: 14px; margin-bottom: 14px; }
 .panel {
   background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
   padding: 15px 16px; display: flex; flex-direction: column; box-shadow: var(--shadow);
-  /* min-width:0 is required -- grid items default to min-width:auto and
-     refuse to shrink below their content, which pushed the last panel off
-     the viewport. */
   min-height: 0; min-width: 0;
 }
 .panel h4 { margin: 0 0 13px; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; flex: none; }
 .panel h4 .hint { margin-left: auto; font-size: 10.5px; color: var(--ink-faint); font-weight: 400; }
 
-/* ---------------- heatmap ---------------- */
-/* table-layout:fixed + explicit widths -- otherwise the longest header
-   ("Uniqueness") stretched its column and squeezed the rest. */
+/* heatmap */
+
 table.heat { border-collapse: separate; border-spacing: 3px; width: 100%; font-size: 11.5px; table-layout: fixed; }
 table.heat th.obj, table.heat td.obj { width: 27%; }
 table.heat th:not(.obj) { width: 10.4%; }
@@ -251,22 +189,18 @@ table.heat td.cell {
 .c-crit { background: var(--crit-bg); color: var(--crit); }
 .c-ovr { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* ---------------- donut ---------------- */
-/* Donut + legend. Side by side by default -- that is what the wide overview
-   panels want and it was already right there.
-   `.vertical` stacks the legend under the ring, for the NARROW drilldown panel
-   where a 6-row legend beside a 138px ring is cramped. */
+/* donut */
+
 .gauge { display: flex; align-items: center; gap: 20px; padding: 6px 2px; }
 .ring { width: 138px; height: 138px; border-radius: 50%; flex: none; display: grid; place-items: center; position: relative; }
 .ring::after { content: ""; position: absolute; inset: 17px; background: var(--panel); border-radius: 50%; }
 .ring .rc { position: relative; z-index: 1; text-align: center; line-height: 1.1; }
 .ring .rc .n { font-size: 24px; font-weight: 700; letter-spacing: normal; }
 .ring .rc .t { font-size: 9px; text-transform: uppercase; letter-spacing: normal; color: var(--ink-faint); margin-top: 3px; }
-/* label left, value right -- one line each, as in the approved mock */
+
 .legend { display: flex; flex-direction: column; gap: 11px; flex: 1; min-width: 0; }
 .legend .li { display: grid; grid-template-columns: 11px 1fr auto; align-items: center; gap: 10px; }
 
-/* stacked variant -- ring on top, legend as its own block beneath a rule */
 .gauge.vertical { flex-direction: column; align-items: center; gap: 0; padding: 4px 2px 2px; }
 .gauge.vertical .legend {
   width: 100%; flex: none; gap: 9px;
@@ -276,7 +210,7 @@ table.heat td.cell {
 .legend .ln { font-size: 12.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .legend b { font-family: ui-monospace, monospace; font-size: 11.5px; font-weight: 500; color: var(--ink-soft); white-space: nowrap; }
 
-/* ---------------- lists / tables ---------------- */
+/* lists / tables */
 .flist { display: flex; flex-direction: column; flex: 1; }
 .frow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line-soft); font-size: 12.5px; }
 .frow:last-child { border-bottom: none; }
@@ -321,14 +255,11 @@ table.heat td.cell {
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); }
 .card h2 { font-size: 15px; font-weight: 500; margin: 0 0 14px; }
 
-/* form action row -- its own line, clearly separated from the fields above
-   (previously the buttons sat flush under Severity and read as part of it) */
 .form-actions {
   display: flex; gap: 10px; align-items: center;
   margin-top: 16px; padding-top: 15px; border-top: 1px solid var(--line-soft);
 }
 
-/* per-rule-type explainer card (swaps as the Rule Type dropdown changes) */
 .guide-card { border-left: 3px solid var(--violet); }
 .guide-head { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; margin-bottom: 10px; }
 .guide-head h2 { font-size: 14px; font-weight: 500; }
@@ -356,7 +287,6 @@ table.heat td.cell {
 }
 
 @media (max-width: 1000px) {
-  /* stack on small screens: normal page scroll, sidebar becomes a top bar */
   .app-shell { grid-template-columns: 1fr; height: auto; overflow: visible; }
   .main { height: auto; overflow: visible; }
   .sidebar { height: auto; overflow-x: auto; overflow-y: visible; flex-direction: row; align-items: center; gap: 14px; }
@@ -368,7 +298,6 @@ table.heat td.cell {
   .guide-row { grid-template-columns: 1fr; gap: 3px; }
 }
 
-/* loading skeleton -- holds the layout so it doesn't jump when data lands */
 .sk { position: relative; overflow: hidden; border-color: var(--line-soft); }
 .sk::after {
   content: ""; position: absolute; inset: 0;
@@ -378,7 +307,7 @@ table.heat td.cell {
 @keyframes sk { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) { .sk::after { animation: none; } }
 
-/* ---------------- forms: shared field + condition builder ---------------- */
+/* forms: shared field + condition builder */
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .fld { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .fld label {
@@ -420,7 +349,7 @@ td.acts .btns { display: flex; gap: 6px; align-items: center; }
 .b-acc { background: var(--accent-soft); color: var(--accent-ink); }
 .b-good { background: var(--good-bg); color: var(--good); }
 
-/* ---------------- runs page ---------------- */
+/* runs page */
 .tabs { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--line-soft); }
 .tab { padding: 9px 15px; border: none; background: none; cursor: pointer;
   font-size: 13px; font-weight: 500; color: var(--ink-faint); border-bottom: 2px solid transparent; }
@@ -439,7 +368,7 @@ td.acts .btns { display: flex; gap: 6px; align-items: center; }
 .brow .ent { font-size: 12.5px; font-weight: 500; min-width: 110px; }
 .brow .err { color: var(--crit); }
 
-/* ---------------- role / identity block in sidebar ---------------- */
+/* role / identity block in sidebar */
 .whoami { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .whoami .txt.sm, .whoami select.sm { padding: 6px 8px; font-size: 12px; width: 100%; }
 .rolehint { font-size: 10.5px; color: var(--ink-faint); }
@@ -453,7 +382,7 @@ select.sm, .txt.sm {
   background: var(--panel); color: var(--ink); font-size: 12px; font-family: inherit;
 }
 
-/* ---------------- DQ score gauge card ---------------- */
+/* DQ score gauge card */
 .gwrap { display: flex; flex-direction: column; flex: 1; }
 .garc { width: 100%; max-width: 210px; height: auto; display: block; margin: 0 auto; }
 .glegend {
@@ -473,7 +402,7 @@ select.sm, .txt.sm {
   color: var(--ink-faint); margin-top: 2px;
 }
 
-/* ---------------- source connection check ---------------- */
+/* source connection check */
 .checkrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .connpill {
   display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px;
@@ -485,13 +414,11 @@ select.sm, .txt.sm {
 .connpill.bad { background: var(--crit-bg); color: var(--crit); }
 .connpill.bad .dot { background: var(--crit); }
 
-
-/* ---------------- rules page: scope filter + table header polish -------- */
+/* rules page: scope filter + table header polish */
 .subpanel .thenrow { margin-bottom: 2px; }
 .subpanel.plain .thenrow .lbl { font-size: 10px; }
 .condrow select, .condrow .txt { font-size: 12.5px; }
 
-/* section header with filters on the right */
 .sec-head {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
 }
@@ -504,7 +431,7 @@ select.sm, .txt.sm {
 .sec-head .spacer { flex: 1; }
 .sec-head select.sm { min-width: 130px; }
 
-/* ---------------- runs page: batch row + progress -------- */
+/* runs page: batch row + progress */
 .batch { transition: border-color .15s; }
 .batch:hover { border-color: var(--line); }
 .bhead { gap: 12px; }
@@ -521,7 +448,7 @@ select.sm, .txt.sm {
 }
 .bprog .cap .now { color: var(--accent); }
 
-/* ---------------- match ALL/ANY segmented toggle ---------------- */
+/* match ALL/ANY segmented toggle */
 .matchrow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .matchrow .lbl {
   font-size: 9.5px; font-weight: 500; text-transform: uppercase;
@@ -538,8 +465,6 @@ select.sm, .txt.sm {
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: var(--accent); color: #fff; }
 
-
-/* explanation / footnote text -- readable in BOTH themes */
 .mini.dim, p.mini { color: var(--ink-soft); }
 .mini code {
   font-family: ui-monospace, monospace; font-size: 10.5px;
@@ -548,14 +473,12 @@ select.sm, .txt.sm {
 }
 .rolehint { color: var(--ink-soft); }
 
-/* dark-mode fixes for components added late */
 .seg button.on { color: #fff; }
 input[type="file"] { color: var(--ink); }
 .txt::placeholder, input::placeholder { color: var(--ink-faint); }
 table.cde tbody tr:hover { background: var(--panel-2); }
 .guide-sql { color: var(--accent-ink); }
 
-/* multi-select chips (UNIQUENESS fields, AGGREGATION group-by) */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip {
   border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft);
@@ -565,7 +488,7 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 .chip:hover { border-color: var(--accent); }
 .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
-/* ---------------- kebab actions menu ---------------- */
+/* kebab actions menu */
 .kebab-wrap { position: relative; display: inline-block; }
 .kebab {
   border: 1px solid transparent; background: none; cursor: pointer;
@@ -589,7 +512,7 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 .menu button.no { color: var(--crit); }
 .menu-note { padding: 8px 11px; font-size: 11px; color: var(--ink-faint); }
 
-/* ---------------- rule detail modal (opens on row click) ---------------- */
+/* rule detail modal (opens on row click) */
 .modal-scrim {
   position: fixed; inset: 0; z-index: 60; background: rgba(10,14,20,.45);
   display: grid; place-items: center; padding: 24px;
@@ -640,18 +563,15 @@ table.cde tbody tr:hover { background: var(--panel-2); }
   overflow-x: auto; color: var(--ink-soft);
 }
 
-/* rows are clickable -- say so */
 table.cde tbody tr.clickable { cursor: pointer; }
 table.cde tbody tr.clickable:hover { background: var(--panel-2); }
 
-/* "multi-element" reads as a real label, not faded micro-text */
 .tag-multi {
   font-size: 10.5px; font-weight: 500; letter-spacing: .02em;
   color: var(--violet); background: var(--violet-bg);
   padding: 3px 8px; border-radius: 6px; white-space: nowrap;
 }
 
-/* config help text needs air before the controls it describes */
 .cfg-help {
   font-size: 12px; color: var(--ink-soft); line-height: 1.55;
   margin: 0 0 12px;
@@ -666,26 +586,19 @@ table.cde tbody tr.clickable:hover { background: var(--panel-2); }
 .chip-link:hover { text-decoration: underline; }
 .chip-count { font-size: 11px; color: var(--ink-faint); font-weight: 500; }
 
-
-
-/* help text inside a config panel always needs air before its controls */
 .cfg-note { font-size: 11.5px; color: var(--ink-faint); margin: 10px 0 0; line-height: 1.5; }
 
-/* actions cell: kebab sits at the row end, no column header needed */
 td.acts-end { text-align: right; width: 44px; }
 th[aria-label="actions"] { width: 44px; }
 
-/* rule name is the human-readable identifier -- give it weight */
 td.rname { font-weight: 500; font-size: 12.5px; max-width: 220px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* short one-idea-per-line notes instead of a run-on sentence */
 .legend-notes { list-style: none; margin: 14px 0 0; padding: 0;
   display: flex; flex-direction: column; gap: 4px; }
 .legend-notes li { font-size: 11.5px; color: var(--ink-soft); }
 th.th-acts { width: 44px; }
 
-/* Data Source picker in the sidebar */
 .src-pick { padding: 0 14px; margin-bottom: 18px; }
 .src-pick select {
   width: 100%; padding: 8px 10px; font-size: 12.5px; font-weight: 500;
@@ -694,7 +607,6 @@ th.th-acts { width: 44px; }
 }
 .brand .bt { font-size: 13.5px; font-weight: 700; line-height: 1.25; }
 
-/* per-entity run progress */
 .prog-list { display: flex; flex-direction: column; gap: 7px; margin: 10px 0 4px; }
 .prog-row { display: grid; grid-template-columns: 120px 1fr 42px auto; gap: 10px; align-items: center; }
 .pr-ent { font-size: 12px; font-weight: 500; }
@@ -707,7 +619,6 @@ th.th-acts { width: 44px; }
   text-align: right; color: var(--ink-soft); }
 .pr-lab { font-size: 10.5px; color: var(--ink-faint); white-space: nowrap; }
 
-/* "in this run" block inside the rule modal */
 .rc-result { background: var(--panel-2); border: 1px solid var(--line-soft);
   border-radius: 10px; padding: 11px 13px; margin-bottom: 14px; }
 .rcr-head { font-size: 9.5px; font-weight: 500; text-transform: uppercase;
@@ -718,19 +629,17 @@ th.th-acts { width: 44px; }
 .rcr-stats .l { font-size: 9.5px; text-transform: uppercase; letter-spacing: normal;
   color: var(--ink-faint); margin-top: 2px; }
 
-/* six across -- one line each, no wrapping, same box as before */
 .k6 .kpi { padding: 13px 12px; min-width: 0; }
 .k6 .kpi .lab, .k6 .kpi .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .k6 .kpi .lab { font-size: 10px; }
 .k6 .kpi .val { font-size: 25px; }
 .k6 .kpi .sub { font-size: 11px; }
-/* six across down to ~1200px; below that fall to 3, then 2 */
+
 @media (max-width: 1200px) { .k6 { grid-template-columns: repeat(3, 1fr); } }
 
-/* ---------------- drilldown breadcrumb bar ---------------- */
+/* drilldown breadcrumb bar */
 .crumbbar { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
-/* the object picker sits hard right so switching object is one click, not a
-   trip back to the overview and in again */
+
 .crumbjump { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .crumbjump .fl { font-size: 9.5px; text-transform: uppercase; letter-spacing: normal;
   color: var(--ink-faint); font-weight: 500; }
@@ -741,14 +650,13 @@ th.th-acts { width: 44px; }
 .crumbjump select:hover { border-color: var(--accent); }
 .crumbjump select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
-/* "set by rule type" -- marks a modal value as derived, not editable */
 .rc-derived {
   font-size: 9.5px; font-weight: 500; color: var(--ink-faint);
   background: var(--panel-2); border: 1px solid var(--line-soft);
   border-radius: 5px; padding: 1px 6px; margin-left: 8px; white-space: nowrap;
 }
 
-/* ---------------- Honeywell Aerospace lockup (top of sidebar) ---------------- */
+/* Honeywell Aerospace lockup (top of sidebar) */
 .aero-brand {
   display: flex; align-items: center; gap: 10px;
   padding: 0 8px 16px; margin-bottom: 16px;
@@ -760,14 +668,10 @@ th.th-acts { width: 44px; }
   font-size: 14.5px; font-weight: 700; letter-spacing: normal; color: var(--ink);
 }
 
-/* ---------------- brand weight ceiling ----------------
-   honeywellaerospace.com uses 300-500 throughout; 700 appears only on the
-   ACTIVE nav item. Browsers render <b>/<strong> at 700 by default, which is
-   why rule values, table names and legend figures looked heavier than
-   anything on the real site. */
+/* brand weight ceiling */
 b, strong { font-weight: 700; }
 
-/* ---------------- "show the failing rows" query block ---------------- */
+/* "show the failing rows" query block */
 .rc-json.vq summary { color: var(--accent-ink); }
 .vq-hint { font-size: 10.5px; color: var(--ink-faint); font-weight: 400; }
 .vq-head { display: flex; align-items: center; gap: 12px; margin: 10px 0 8px; }
