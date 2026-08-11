@@ -4,3 +4,29 @@ __pycache__/
 *.pyc
 .env
 ATT38222.env
+
+# backend
+backend/smtc_dq.db
+backend/.env
+backend/**/__pycache__/
+
+# frontend
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+*.tsbuildinfo
+
+# junk
+.DS_Store
+*.db
+
+# never commit real data or credentials to a corporate remote
+.env
+.env.*
+!.env.example
+!*.env.example
+data_dump/
+extra/*.csv
+backend/source_db_snapshot.sql
+frontend/public/fonts/*
+!frontend/public/fonts/README.md
