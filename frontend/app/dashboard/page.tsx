@@ -62,7 +62,7 @@ export default function DashboardPage() {
         </div>
         <div className="flt">
           <span className="fl">Run Date</span>
-          <span style={{ fontSize: 12.5, fontFamily: "ui-monospace, monospace", fontWeight: 500, paddingTop: 6 }}>
+          <span style={{ fontSize: 12.5, fontFamily: "var(--font-brand)", fontWeight: 500, paddingTop: 6 }}>
             {new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
           </span>
         </div>

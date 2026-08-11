@@ -77,7 +77,7 @@ function buildSvg(data: TrendPoint[], W: number, H: number): string {
   data.forEach((r, i) => {
     const h = barH(r), y = baseY - h;
     out += `<rect x="${(xs[i] - barW / 2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="8" fill="url(#barg)"/>`;
-    out += `<text x="${xs[i].toFixed(1)}" y="${(y - 10).toFixed(1)}" font-size="14" font-weight="500" fill="var(--good)" font-family="ui-monospace,monospace" text-anchor="middle">${fmtNum(r.critical_failed_checks)}</text>`;
+    out += `<text x="${xs[i].toFixed(1)}" y="${(y - 10).toFixed(1)}" font-size="14" font-weight="500" fill="var(--good)" font-family="var(--font-brand)" text-anchor="middle">${fmtNum(r.critical_failed_checks)}</text>`;
   });
 
   out += `<path d="${smooth}" fill="none" stroke="var(--accent)" stroke-width="3.5" stroke-linecap="round"/>`;
@@ -86,12 +86,12 @@ function buildSvg(data: TrendPoint[], W: number, H: number): string {
     const label = `${r.dq_score ?? "-"}%`;
     const pillW = 15 + label.length * 8.6;
     out += `<rect x="${(x - pillW / 2).toFixed(1)}" y="${(y - 30).toFixed(1)}" width="${pillW.toFixed(1)}" height="20" rx="10" fill="var(--panel)" stroke="var(--accent)" stroke-width="1.5"/>`;
-    out += `<text x="${x.toFixed(1)}" y="${(y - 16).toFixed(1)}" font-size="13" font-weight="500" fill="var(--accent)" font-family="ui-monospace,monospace" text-anchor="middle">${label}</text>`;
+    out += `<text x="${x.toFixed(1)}" y="${(y - 16).toFixed(1)}" font-size="13" font-weight="500" fill="var(--accent)" font-family="var(--font-brand)" text-anchor="middle">${label}</text>`;
     out += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5.5" fill="var(--panel)" stroke="var(--accent)" stroke-width="3"/>`;
   });
 
   data.forEach((r, i) => {
-    out += `<text x="${xs[i].toFixed(1)}" y="${(baseY + 22).toFixed(1)}" font-size="12" font-weight="500" fill="var(--ink)" font-family="ui-monospace,monospace" text-anchor="middle">${r.run_name}</text>`;
+    out += `<text x="${xs[i].toFixed(1)}" y="${(baseY + 22).toFixed(1)}" font-size="12" font-weight="500" fill="var(--ink)" font-family="var(--font-brand)" text-anchor="middle">${r.run_name}</text>`;
   });
 
   return out;

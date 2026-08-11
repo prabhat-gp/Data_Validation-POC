@@ -8,7 +8,7 @@ interface FileSlot { file: File | null; entity: string }
 export default function RunsPage() {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
-  const [mode, setMode] = useState<"upload" | "db">("upload");
+  const [mode, setMode] = useState<"upload" | "db">("db");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -100,11 +100,11 @@ export default function RunsPage() {
 
         <section className="card" style={{ marginBottom: 16 }}>
           <div className="tabs">
-            <button className={mode === "upload" ? "tab on" : "tab"} onClick={() => setMode("upload")}>
-              Upload Files
-            </button>
             <button className={mode === "db" ? "tab on" : "tab"} onClick={() => setMode("db")}>
               Run from Database
+            </button>
+            <button className={mode === "upload" ? "tab on" : "tab"} onClick={() => setMode("upload")}>
+              Upload Files
             </button>
           </div>
 
