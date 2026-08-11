@@ -20,6 +20,13 @@ Exit code is non-zero if any rule disagrees, so it can gate a deploy.
 
 import os
 import sys
+
+# this script lives in extra/, the app package lives in backend/
+BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend")
+sys.path.insert(0, BACKEND)
+
+import os
+import sys
 import urllib.parse
 
 from sqlalchemy import create_engine, text

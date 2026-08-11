@@ -13,14 +13,23 @@ Usage:
     python create_tables.py --reset    # drop everything and recreate
 """
 
+import os
+import sys
+
+# this script lives in extra/, the app package lives in backend/
+BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend")
+sys.path.insert(0, BACKEND)
+
 import sys
 
 from sqlalchemy.orm import Session
 
-from app.database import CONFIG_URL, RESULTS_URL, config_engine, results_engine
+from app.database import (
+    CONFIG_URL, RESULTS_URL, SOURCE_URL, config_engine, results_engine, source_engine,
+)
 from app.models import (
-    ConfigBase, ENTITIES, ResultsBase, ValRuleType, ValSeverity, ValStatus,
-    staging_table_name,
+    ConfigBase, ENTITIES, ResultsBase, StagingBase, ValRuleType, ValSeverity,
+    ValStatus, staging_table_name,
 )
 from app.rule_compiler import RULE_TYPE_DESCRIPTIONS, RULE_TYPE_META, RULE_TYPES
 
@@ -48,17 +57,20 @@ STATUSES = [
 def main():
     import re as _re
     mask = lambda u: _re.sub(r":[^:@]*@", ":****@", u)
+    print(f"SOURCE  -> {mask(SOURCE_URL)}   (source tables + stg_*)")
     print(f"CONFIG  -> {mask(CONFIG_URL)}")
     print(f"RESULTS -> {mask(RESULTS_URL)}\n")
 
     if "--reset" in sys.argv:
         print("Dropping tables in both databases...")
+        StagingBase.metadata.drop_all(source_engine)      # only stg_*, never source tables
         ResultsBase.metadata.drop_all(results_engine)
         ConfigBase.metadata.drop_all(config_engine)
 
     print("Creating tables...")
     ConfigBase.metadata.create_all(config_engine)
     ResultsBase.metadata.create_all(results_engine)
+    StagingBase.metadata.create_all(source_engine)     # stg_* beside the source data
 
     with Session(config_engine) as db:
         if db.query(ValRuleType).count() == 0:
@@ -84,8 +96,9 @@ def main():
 
         db.commit()
 
-    print(f"\n  CONFIG_DB  : {sorted(ConfigBase.metadata.tables)}")
-    print(f"  TARGET_DB  : {sorted(ResultsBase.metadata.tables)}")
+    print(f"\n  SOURCE_DB  : {sorted(StagingBase.metadata.tables)}")
+    print(f"  CONFIG_DB  : {sorted(ConfigBase.metadata.tables)}")
+    print(f"  RESULTS_DB : {sorted(ResultsBase.metadata.tables)}")
     print(f"\nEntities (from the ENTITIES constant, no catalog table):")
     for name, meta in ENTITIES.items():
         print(f"  {name:<16} -> {staging_table_name(name):<20} {len(meta['columns'])} columns")

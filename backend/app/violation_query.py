@@ -10,8 +10,8 @@ WHY THIS IS NOT THE ENGINE'S SQL
     that exists in the user's source database, so its SQL is unrunnable there.
 
     This module emits the same LOGIC against the SOURCE tables:
-        stg_b2b_customer  ->  b2bcustomer          (source_object_name)
-        record_key        ->  customer_id          (primary_key_field)
+        stg_account       ->  account              (source_object_name)
+        record_key        ->  Id                   (primary_key_field)
         run_id = :run_id  ->  dropped
         :bound params     ->  inlined as literals  (so it is copy-pasteable)
         + LIMIT n

@@ -24,6 +24,13 @@ Memory use is flat regardless of file size -- a 650 MB or a 65 GB file both
 run in a few MB of RAM.
 """
 
+import os
+import sys
+
+# this script lives in extra/, the app package lives in backend/
+BACKEND = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend")
+sys.path.insert(0, BACKEND)
+
 import csv
 import os
 import sys
@@ -147,7 +154,7 @@ def source_engine():
 
 def create_table(conn, table, key, cols):
     conn.execute(text(f"DROP TABLE IF EXISTS `{table}`"))
-    # TEXT throughout, matching the b2b* tables. Nothing is truncated, and the
+    # TEXT throughout. Nothing is truncated, and the
     # engine copies into stg_account before validating anyway, so the source
     # column types never reach a rule. The Id index keeps the initial SELECT
     # and any later spot-check fast at 150k rows.

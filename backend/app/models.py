@@ -32,8 +32,9 @@ from sqlalchemy.orm import declarative_base
 
 # TWO metadata sets -- config tables and results tables live in different
 # databases (CONFIG_DB / TARGET_DB), so they must not share one MetaData.
-ConfigBase = declarative_base()
-ResultsBase = declarative_base()
+ConfigBase = declarative_base()     # config_db  -- rules + lookups
+ResultsBase = declarative_base()    # results_db -- batches, runs, metrics, violations
+StagingBase = declarative_base()    # source_db  -- stg_* tables, beside the source data
 Base = ResultsBase          # back-compat for existing imports
 
 
@@ -58,12 +59,10 @@ def utcnow():
 SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"]
 
 ENTITIES: dict = {
-    # SFDC data, but the 650MB / 450-column export is sliced to these 17
-    # columns and landed in MySQL source_db by prepare_account.py -- so the
-    # run reads it over the MySQL connection like any other table. Switch
-    # source_system back to "SFDC" once there is a live Salesforce connection.
+    # SFDC. The 650MB / 450-column export is sliced to these 17 columns by
+    # extra/prepare_account.py and landed in source_db.
     "Account": {
-        "source_system": "MySQL",
+        "source_system": "SFDC",
         "source_object_name": "account",
         "primary_key_field": "Id",
         "columns": [
@@ -73,32 +72,7 @@ ENTITIES: dict = {
             "ShippingStreet", "Type", "Website", "Region__c",
         ],
     },
-    # --- MySQL source_db (data_dump/b2b*.csv) -------------------------------
-    "B2B Customer": {
-        "source_system": "MySQL",
-        "source_object_name": "b2bcustomer",
-        "primary_key_field": "customer_id",
-        "columns": ["customer_name", "email", "status", "region", "sbg_id"],
-    },
-    "B2B Product": {
-        "source_system": "MySQL",
-        "source_object_name": "b2bproduct",
-        "primary_key_field": "product_id",
-        "columns": ["product_code", "product_name", "category", "status", "sbg_id"],
-    },
-    "B2B Price": {
-        "source_system": "MySQL",
-        "source_object_name": "b2bprice",
-        "primary_key_field": "price_id",
-        "columns": ["product_id", "price_amount", "discount_pct", "status",
-                    "eff_date", "end_date"],
-    },
-    "B2B SBG": {
-        "source_system": "MySQL",
-        "source_object_name": "b2bsbg",
-        "primary_key_field": "sbg_id",
-        "columns": ["sbg_name"],
-    },
+    # Hybris objects get added here as their dumps arrive.
 }
 
 # Convenience view: {entity_name: [column, ...]}
@@ -114,7 +88,7 @@ def staging_table_name(entity_name: str) -> str:
 # A rule with no single field_name (multi-field UNIQUENESS, grouped
 # AGGREGATION) is labelled with the combination it checks, joined by this.
 # The dashboard splits on it to count the REAL elements a rule covers:
-# "customer_name + sbg_id" is TWO elements, not a column of that name.
+# "Name + BillingCountry" is TWO elements, not a column of that name.
 # Both producer (validation_engine._display_field) and consumer (the dashboard
 # counters) must use this constant, or the element counts silently drift.
 MULTI_FIELD_SEP = " + "
@@ -304,7 +278,7 @@ class ValViolation(ResultsBase):
 
 
 # ---------------------------------------------------------------------------
-# STAGING -- one table per entity, generated from ENTITIES. Runtime-only.
+# STAGING -- one table per entity, in SOURCE_DB alongside the source tables.
 # ---------------------------------------------------------------------------
 # Physical columns (not JSON/EAV) so a compiled rule can say `WHERE Name IS NULL`
 # against a real column and stay fast and indexable. Generated at import time
@@ -322,7 +296,7 @@ for _entity, _meta in ENTITIES.items():
     for _col in _meta["columns"]:
         _attrs[_col] = Column(_col, Text)
     STAGING_MODELS[_entity] = type(
-        f"Stg{re.sub(r'[^A-Za-z0-9]', '', _entity)}", (ResultsBase,), _attrs
+        f"Stg{re.sub(r'[^A-Za-z0-9]', '', _entity)}", (StagingBase,), _attrs
     )
 
 

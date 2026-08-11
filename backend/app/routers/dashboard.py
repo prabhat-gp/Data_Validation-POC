@@ -38,7 +38,7 @@ def _covered_elements(state_row, meta=None) -> set:
     and Uniqueness rules). Counting metrics reported 13 "elements checked" for
     an object with 5 columns.
 
-    A multi-field rule's label ("customer_name + sbg_id") is expanded into the
+    A multi-field rule's label ("Name + BillingCountry") is expanded into the
     real columns it covers, so it counts as the two elements it checks rather
     than as one column of that name. Anything that still is not a declared
     column of the object is dropped -- a rule-name fallback label is not an
@@ -116,7 +116,7 @@ def kpis(batch_id: Optional[int] = None, source_system: Optional[str] = None, db
     critical_failed = sum(m.records_failed for m in all_metrics if m.severity in BLOCKING)
 
     # Rule coverage: distinct ELEMENTS with a rule run, over declared elements.
-    # Counted per object, so sbg_id on Customer and on Product are two CDEs.
+    # Counted per object, so the same column on two objects is two CDEs.
     total_fields, covered_fields = 0, 0
     for s in state:
         meta = ENTITIES.get(s["entity_name"])

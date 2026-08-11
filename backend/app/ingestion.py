@@ -63,26 +63,26 @@ from .models import ENTITIES, staging_model, staging_table_name
 
 BATCH_SIZE = 5000
 
-# One connection string PER SOURCE SYSTEM, set at deploy time. Absent ones make
-# a db_fetch fail with a clear message rather than silently falling back.
+# SFDC and Hybris extracts are IMPORTED INTO source_db -- see
+# extra/prepare_account.py. So every entity reads from source_db by default,
+# whatever source system it is labelled with; `source_system` is provenance
+# metadata, not a separate connection.
 #
-# MySQL example (the source_db holding the b2b* tables):
-#   MYSQL_URL="mysql+pymysql://user:pass@localhost:3306/source_db"
+# A per-system URL is only needed if you later point at a live system instead
+# of an import. Setting one of these overrides source_db for that system:
+#   SFDC_DB_URL=... HYBRIS_DB_URL=... MYSQL_URL=...
 ENV_VAR_FOR = {"MySQL": "MYSQL_URL", "SFDC": "SFDC_DB_URL", "Hybris": "HYBRIS_DB_URL"}
 
 SOURCE_URLS = {name: os.getenv(var) for name, var in ENV_VAR_FOR.items()}
 
-# Fall back to the discrete DB_* variables for MySQL.
-if not SOURCE_URLS.get("MySQL"):
-    SOURCE_URLS["MySQL"] = _mysql_url_from_parts()
-
-# Back-compat: a single SOURCE_DB_URL still works as the MySQL connection.
-if not SOURCE_URLS["MySQL"]:
-    SOURCE_URLS["MySQL"] = os.getenv("SOURCE_DB_URL")
-
 
 def source_url_for(source_system: str):
-    return SOURCE_URLS.get(source_system)
+    """The live override if one is configured, otherwise source_db."""
+    override = SOURCE_URLS.get(source_system)
+    if override:
+        return override
+    from .database import SOURCE_URL
+    return SOURCE_URL
 
 
 def _bulk_insert(db: Session, entity_name: str, rows: list):

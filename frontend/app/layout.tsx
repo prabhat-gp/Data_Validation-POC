@@ -23,7 +23,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: noFlashScript }} />
       </head>
-      <body>
+      {/* suppressHydrationWarning: the theme script above stamps data-theme
+          before React hydrates, and browser extensions commonly inject
+          attributes into <body>. Neither is a real mismatch in our markup. */}
+      <body suppressHydrationWarning>
         <div className="app-shell">
           <Sidebar />
           <div className="main">{children}</div>

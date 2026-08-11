@@ -30,7 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from . import ingestion
-from .database import ConfigSession
+from .database import ConfigSession, StagingSession
 from .models import (
     ENTITIES, MULTI_FIELD_SEP, ValMetric, ValRule, ValRun, ValViolation,
     staging_table_name,
@@ -125,14 +125,19 @@ def stage_run(db: Session, run_id: int, source_kind: str, file_path: Optional[st
         run.records_scanned = n
         db.commit()
 
-    if source_kind == "file_upload":
-        n = ingestion.stage_from_csv(db, run_id, entity, file_path,
-                                     on_progress=bump, on_total=set_total)
-    elif source_kind == "db_fetch":
-        n = ingestion.stage_from_db(db, run_id, entity, run.source_system,
-                                    on_progress=bump, on_total=set_total)
-    else:
-        raise ValueError(f"Unknown source_kind: {source_kind}")
+    # Rows go into stg_* in SOURCE_DB; run progress stays on `db` (results_db).
+    sdb = StagingSession()
+    try:
+        if source_kind == "file_upload":
+            n = ingestion.stage_from_csv(sdb, run_id, entity, file_path,
+                                         on_progress=bump, on_total=set_total)
+        elif source_kind == "db_fetch":
+            n = ingestion.stage_from_db(sdb, run_id, entity, run.source_system,
+                                        on_progress=bump, on_total=set_total)
+        else:
+            raise ValueError(f"Unknown source_kind: {source_kind}")
+    finally:
+        sdb.close()
 
     run.records_scanned = n
     run.total_records = n
@@ -153,6 +158,7 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
     meta = ENTITIES[entity]
     scanned = run.records_scanned or 0
 
+    sdb = StagingSession()
     rules = rules_for_entity(db, entity, rule_ids)
     run.rules_executed = len(rules)
     run.rules_total = len(rules)
@@ -183,14 +189,14 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
             db.commit()
             continue
 
-        failed = _execute(db, run_id, rule, compiled)
+        failed = _execute(sdb, db, run_id, rule, compiled)
 
         # AGGREGATION violations are GROUPS, not records, so the denominator
         # is the number of groups examined -- otherwise "1 breaching group"
         # reads as 1 bad record out of 101 and the score is meaningless.
         checked = scanned
         if compiled.group_level and compiled.denominator_sql:
-            checked = db.execute(
+            checked = sdb.execute(
                 text(compiled.denominator_sql), {"run_id": run_id, **compiled.params}
             ).scalar() or 0
 
@@ -204,12 +210,21 @@ def validate_run(db: Session, run_id: int, staged_runs: dict, rule_ids: Optional
         run.rules_done = (run.rules_done or 0) + 1
         db.commit()      # one commit per rule, progress included
 
+    sdb.close()
 
-def _execute(db: Session, run_id: int, rule: ValRule, compiled) -> int:
-    """Run the rule's single SQL statement and bulk-write its violations."""
+
+def _execute(sdb: Session, db: Session, run_id: int, rule: ValRule, compiled) -> int:
+    """
+    Run the rule's single SQL statement and bulk-write its violations.
+
+    sdb -- staging session (source_db). The compiled SQL selects from stg_*
+           and, for referential integrity, joins another stg_* table.
+    db  -- results session (results_db). Violations are written here.
+    Two sessions because the two sides now live in different databases.
+    """
     params = {"run_id": run_id, **compiled.params}
     failed, batch = 0, []
-    for row in db.execute(text(compiled.sql), params):
+    for row in sdb.execute(text(compiled.sql), params):
         batch.append({
             "run_id": run_id,
             "rule_id": rule.rule_id,
@@ -247,8 +262,13 @@ def _default_reason(rule_type: str, col: Optional[str]) -> str:
 
 # ---------------------------------------------------------------- PHASE 3 ---
 def clear_run_staging(db: Session, run_id: int):
+    """Staging lives in source_db, so this needs its own session."""
     run = db.get(ValRun, run_id)
-    ingestion.clear_staging(db, run.entity_name, run_id)
+    sdb = StagingSession()
+    try:
+        ingestion.clear_staging(sdb, run.entity_name, run_id)
+    finally:
+        sdb.close()
 
 
 def finish_run(db: Session, run_id: int, error: Optional[str] = None):

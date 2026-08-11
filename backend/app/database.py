@@ -4,8 +4,16 @@ database.py
 Single place for the DB connections. Nothing else in the codebase imports a
 driver directly, so moving to Oracle/Postgres later is an env var change here.
 
-    CONFIG_DATABASE_URL / RESULTS_DATABASE_URL   full URL, wins if set
-    DB_HOST / DB_PORT / DB_USER / DB_PASSWORD    + CONFIG_DB / TARGET_DB
+THREE databases:
+    SOURCE_DB   the imported SFDC / Hybris tables AND the stg_* staging tables
+    CONFIG_DB   val_rules + its lookup tables
+    RESULTS_DB  val_batches / val_runs / val_metrics / val_violations
+
+Staging lives in SOURCE_DB, beside the data it is staged from, so a compiled
+rule never crosses a database boundary while it runs.
+
+    CONFIG_DATABASE_URL / RESULTS_DATABASE_URL / SOURCE_DATABASE_URL  full URLs
+    DB_HOST / DB_PORT / DB_USER / DB_PASSWORD  + SOURCE_DB / CONFIG_DB / RESULTS_DB
 
 If neither resolves, startup FAILS. There is deliberately no local-file
 fallback: a misread .env would otherwise start cleanly against an empty
@@ -24,8 +32,7 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(_BACKEND_DIR)
 try:
     from dotenv import load_dotenv
-    load_dotenv(os.path.join(_REPO_ROOT, ".env"))
-    load_dotenv(os.path.join(_BACKEND_DIR, ".env"), override=True)
+    load_dotenv(os.path.join(_BACKEND_DIR, ".env"))
 except ImportError:
     pass
 
@@ -49,22 +56,28 @@ def _require(url, name, db_var):
     )
 
 
-# TWO databases, matching the .env layout:
-#   CONFIG_DB  -> val_rules + its lookup tables      (the governed asset)
-#   TARGET_DB  -> val_batches / val_runs / val_metrics / val_violations + staging
+SOURCE_URL = _require(
+    os.getenv("SOURCE_DATABASE_URL") or _mysql_url("SOURCE_DB"), "SOURCE", "SOURCE_DB")
 CONFIG_URL = _require(
     os.getenv("CONFIG_DATABASE_URL") or _mysql_url("CONFIG_DB"), "CONFIG", "CONFIG_DB")
+# TARGET_DB is the old name for RESULTS_DB -- accepted so an existing .env keeps working.
 RESULTS_URL = _require(
-    os.getenv("RESULTS_DATABASE_URL") or _mysql_url("TARGET_DB"), "RESULTS", "TARGET_DB")
+    os.getenv("RESULTS_DATABASE_URL") or _mysql_url("RESULTS_DB") or _mysql_url("TARGET_DB"),
+    "RESULTS", "RESULTS_DB")
 
 
 def _make(url):
     return create_engine(url, future=True, pool_pre_ping=True)
 
 
+source_engine = _make(SOURCE_URL)
 config_engine = _make(CONFIG_URL)
 results_engine = _make(RESULTS_URL)
 
+# StagingSession writes and reads the stg_* tables in source_db. Every compiled
+# rule runs on THIS session -- it selects from staging and, for referential
+# integrity, joins another staging table, so both sides must be in one database.
+StagingSession = sessionmaker(bind=source_engine, autoflush=False, future=True)
 ConfigSession = sessionmaker(bind=config_engine, autoflush=False, future=True)
 ResultsSession = sessionmaker(bind=results_engine, autoflush=False, future=True)
 
@@ -72,6 +85,14 @@ ResultsSession = sessionmaker(bind=results_engine, autoflush=False, future=True)
 engine = results_engine
 SessionLocal = ResultsSession
 DATABASE_URL = RESULTS_URL
+
+
+def get_staging_db():
+    db = StagingSession()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def get_config_db():

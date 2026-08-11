@@ -455,8 +455,8 @@ DIMENSIONS = [
 # different dimensions depending on intent --
 #   RANGE on discount_pct 0-100      -> Validity  (a percent above 100 is invalid)
 #   RANGE on price_amount 0-100000   -> Accuracy  (100001 is legal, just implausible)
-#   AGGREGATION "customers per SBG"  -> Accuracy  (reasonableness)
-#   AGGREGATION "one price per part" -> Uniqueness (group-level duplicate)
+#   AGGREGATION "accounts per website" -> Accuracy   (reasonableness)
+#   AGGREGATION "one price per part"   -> Uniqueness (group-level duplicate)
 RULE_TYPE_META = {
     "COMPLETENESS":          ("Completeness", "QUERY"),
     "VALIDITY":              ("Validity",     "QUERY"),
