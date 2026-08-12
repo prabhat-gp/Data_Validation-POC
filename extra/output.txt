@@ -1,0 +1,108 @@
+=======================================================================
+  python.exe C:\Users\H563021.HONAERO\Desktop\Data Validation\Data_Validation-POC\extra\seed_rules_hybris.py --direct --clear
+========================================================================
+cleared 8 existing Hybris rules
+
+
+B2B Customer  (20 rules)
+  COMPLETENESS           Completeness  Customer uid is required
+  UNIQUENESS             Uniqueness    Customer uid must be unique
+  COMPLETENESS           Completeness  Customer name is required
+  VALIDITY               Validity      Customer name has no mis-encoded characters
+  COMPLETENESS           Completeness  Email is required
+  UNIQUENESS             Uniqueness    Email must be unique
+  COMPLETENESS           Completeness  Phone is required
+  VALIDITY               Validity      Phone must be + country code then digits
+  ALLOWED_VALUES         Validity      Active must be True or False
+  ALLOWED_VALUES         Validity      Login disabled must be True or False
+  CROSS_FIELD_SIMPLE     Consistency   An active customer cannot have login disabled
+  VALIDITY               Validity      Creation time is DD.MM.YYYY HH:MM:SS
+  VALIDITY               Validity      Default unit is a 10-digit code
+  REFERENTIAL_INTEGRITY  Integrity     Default unit must exist in B2B Unit
+  ALLOWED_VALUES         Validity      Customer type must be a known value
+  ALLOWED_VALUES         Validity      Tool access must be a known value
+  COMPLETENESS           Completeness  Session language is required
+  VALIDITY               Validity      Session language is a 2-letter ISO code
+  COMPLETENESS           Completeness  SFDC contact id is required
+  UNIQUENESS             Uniqueness    SFDC contact id must be unique
+
+B2B Unit  (13 rules)
+  COMPLETENESS           Completeness  Unit uid is required
+  UNIQUENESS             Uniqueness    Unit uid must be unique
+  COMPLETENESS           Completeness  Unit name is required
+  UNIQUENESS             Uniqueness    Unit name should be unique
+  COMPLETENESS           Completeness  English localised name is required
+  COMPLETENESS           Completeness  Account type is required
+  ALLOWED_VALUES         Validity      Account type must be a known value
+  ALLOWED_VALUES         Validity      Active must be True or False
+  ALLOWED_VALUES         Validity      Order block must be True or False
+  COMPLETENESS           Completeness  Service layer is required
+  ALLOWED_VALUES         Validity      Service layer must be a known value
+  COMPLETENESS           Completeness  Address reference is required
+  REFERENTIAL_INTEGRITY  Integrity     Address reference must exist in Address
+
+Address  (6 rules)
+  COMPLETENESS           Completeness  Country is required
+  VALIDITY               Validity      Country is a 2-letter ISO code
+  COMPLETENESS           Completeness  Postal code is required
+  ALLOWED_VALUES         Validity      Billing flag must be True or False
+  ALLOWED_VALUES         Validity      Shipping flag must be True or False
+  ALLOWED_VALUES         Validity      Save address must be True or False
+
+39 rules created and APPROVED, 0 failed
+  ALLOWED_VALUES           11
+  COMPLETENESS             14
+  CROSS_FIELD_SIMPLE       1
+  REFERENTIAL_INTEGRITY    2
+  UNIQUENESS               5
+  VALIDITY                 6
+
+Referential integrity needs both objects in the SAME run:
+  B2B Customer   -> B2B Unit
+  B2B Unit       -> Address
+
+========================================================================
+  VERIFY
+========================================================================
+  source   source_db      connected
+  config   config_db      connected
+  results  results_db     connected
+
+  stg_account            2 indexes
+  stg_b2b_customer       5 indexes
+  stg_b2b_unit           4 indexes
+  stg_address            1 indexes
+
+  Account           22 rules, 21 approved
+  B2B Customer      20 rules, 20 approved
+  B2B Unit          13 rules, 13 approved
+  Address            6 rules, 6 approved
+
+  61/73 active rules compile
+
+========================================================================
+  12 PROBLEM(S):
+    - rule 9 targets unknown object 'B2B Product'
+    - rule 10 targets unknown object 'B2B Product'
+    - rule 11 targets unknown object 'B2B Product'
+    - rule 12 targets unknown object 'B2B Product'
+    - rule 13 targets unknown object 'B2B Product'
+    - rule 14 targets unknown object 'B2B Price'
+    - rule 15 targets unknown object 'B2B Price'
+    - rule 16 targets unknown object 'B2B Price'
+    - rule 17 targets unknown object 'B2B Price'
+    - rule 18 targets unknown object 'B2B Price'
+    - rule 19 targets unknown object 'B2B SBG'
+    - rule 20 targets unknown object 'B2B SBG'
+PS C:\Users\H563021.HONAERO\Desktop\Data Validation\Data_Validation-POC\extra> 
+
+
+
+
+
+
+
+
+
+
+
