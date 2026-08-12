@@ -23,5 +23,6 @@ frontend/.env.local
 data_dump/
 extra/*.csv
 backend/source_db_snapshot.sql
-frontend/public/fonts/*
-!frontend/public/fonts/README.md
+# PP Telegraf IS tracked. It was ignored, so a fresh clone got an empty
+# fonts/ folder, every @font-face 404'd, and the whole UI silently fell back
+# to the browser's default sans-serif.

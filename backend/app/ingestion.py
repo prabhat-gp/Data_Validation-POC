@@ -57,7 +57,7 @@ def _mysql_url_from_parts():
     return f"mysql+pymysql://{user}:{pwd}@{host}:{port}/{db}"
 
 from sqlalchemy import (
-    Column as SAColumn, MetaData, String as SAString, Table, cast, insert,
+    Column as SAColumn, MetaData, String as SAString, Table, cast, func, insert,
     literal, select, text,
 )
 from sqlalchemy.engine import make_url
@@ -66,6 +66,11 @@ from sqlalchemy.orm import Session
 from .models import ENTITIES, staging_model, staging_table_name, utcnow
 
 BATCH_SIZE = 5000
+
+# Rows per INSERT..SELECT chunk. Staging is one statement per chunk, so this
+# is purely how often the progress bar can move -- 25k on a 1M-row table means
+# 40 updates instead of one jump from 0% to 100% at the end.
+INSERT_SELECT_CHUNK = 25_000
 
 # SFDC and Hybris extracts are IMPORTED INTO source_db -- see
 # extra/prepare_account.py. So every entity reads from source_db by default,
@@ -105,9 +110,12 @@ def _bulk_insert(db: Session, entity_name: str, rows: list):
 #
 # Measured on 1,000,000 rows:  streaming ~200s   INSERT..SELECT ~40s.
 #
-# It is also a single statement, so the staged snapshot is atomic and
-# internally consistent. The streaming path gets that from one long-lived
-# transaction; a chunked copy would get neither.
+# It runs in KEYSET CHUNKS rather than as one statement. One statement would
+# be atomic, but records_scanned would stay at 0 for the whole phase and the
+# UI's loading bar sat dead at 0% until validation began -- which is what it
+# did. Chunking reports real progress. The cost is that the snapshot is no
+# longer a single transaction, which is fine here: source tables are imported
+# dumps that nothing writes to while a run is in flight.
 def _same_server(url_a: str, url_b: str) -> bool:
     """
     Same database server? Compares backend, host and port -- NOT the database
@@ -126,7 +134,7 @@ def _same_server(url_a: str, url_b: str) -> bool:
 
 
 def _insert_select(db: Session, run_id: int, entity_name: str,
-                   source_url: str, staging_url: str) -> int:
+                   source_url: str, staging_url: str, on_progress=None) -> int:
     """
     INSERT INTO stg_x (run_id, record_key, <cdes>, loaded_at)
     SELECT :run_id, <pk>, <cdes>, :now FROM <source_schema>.<source_table>
@@ -151,19 +159,44 @@ def _insert_select(db: Session, run_id: int, entity_name: str,
         schema=schema,
     )
     stg = staging_model(entity_name).__table__
+    key = src.c[key_col]
+    now = utcnow()
 
-    sel = select(
-        literal(run_id),
-        cast(src.c[key_col], SAString(120)),      # record_key is VARCHAR(120)
-        *[src.c[c] for c in columns],
-        literal(utcnow()),
-    )
-    stmt = insert(stg).from_select(
-        ["run_id", "record_key"] + columns + ["loaded_at"], sel
-    )
-    result = db.execute(stmt)
-    db.commit()
-    return result.rowcount or 0
+    total, last = 0, None
+    while True:
+        # Upper bound of the next chunk, taken from the SOURCE key rather than
+        # from what landed in staging: record_key is a VARCHAR cast, and string
+        # order is not the source key's order for every key type.
+        window = select(key.label("k")).order_by(key).limit(INSERT_SELECT_CHUNK)
+        if last is not None:
+            window = window.where(key > last)
+        sub = window.subquery()
+        # MAX over the SUBQUERY's column. Taking max(key) here instead would
+        # reference the outer table, produce a cartesian product, and return
+        # the max of the whole table -- collapsing every chunk into one.
+        hi = db.execute(select(func.max(sub.c.k))).scalar()
+        if hi is None:
+            break
+
+        sel = select(
+            literal(run_id),
+            cast(key, SAString(120)),             # record_key is VARCHAR(120)
+            *[src.c[c] for c in columns],
+            literal(now),
+        ).where(key <= hi)
+        if last is not None:
+            sel = sel.where(key > last)
+
+        n = db.execute(insert(stg).from_select(
+            ["run_id", "record_key"] + columns + ["loaded_at"], sel)).rowcount or 0
+        db.commit()
+        total += n
+        last = hi
+        if on_progress:
+            on_progress(total)
+        if n < INSERT_SELECT_CHUNK:
+            break
+    return total
 
 
 def _entity_meta(entity_name: str) -> dict:
@@ -263,7 +296,8 @@ def stage_from_db(db: Session, run_id: int, entity_name: str,
                 on_total(cc.execute(
                     text(f"SELECT COUNT(*) FROM {meta['source_object_name']}")).scalar() or 0)
         try:
-            n = _insert_select(db, run_id, entity_name, url, SOURCE_URL)
+            n = _insert_select(db, run_id, entity_name, url, SOURCE_URL,
+                               on_progress=on_progress)
             if on_progress:
                 on_progress(n)
             return n
