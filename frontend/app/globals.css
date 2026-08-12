@@ -369,6 +369,9 @@ td.acts .btns { display: flex; gap: 6px; align-items: center; }
 .entrow { display: flex; align-items: center; gap: 10px; padding: 9px 2px;
   border-bottom: 1px solid var(--line-soft); cursor: pointer; }
 .entrow.off { opacity: .5; cursor: not-allowed; }
+/* Placeholder where an undeclared table's checkbox would be, so the object
+   names still line up in a column. */
+.entrow .box-none { display: inline-block; width: 13px; height: 13px; }
 .entrow .en { font-size: 13px; font-weight: 500; min-width: 130px; }
 
 .batch { border: 1px solid var(--line-soft); border-radius: 10px; padding: 12px; margin-bottom: 12px; }

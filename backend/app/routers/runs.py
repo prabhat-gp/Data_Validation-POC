@@ -25,10 +25,11 @@ from typing import Optional
 from fastapi import (
     APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile,
 )
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..models import ENTITIES, SOURCE_SYSTEMS, ValBatch, ValRun
+from ..models import ENTITIES, SOURCE_SYSTEMS, ValBatch, ValRule, ValRun
 from ..schemas import BatchOut, BatchTriggerDb, RunOut
 from ..validation_engine import (
     clear_run_staging, finish_run, stage_run, validate_run,
@@ -217,6 +218,79 @@ def trigger_db_batch(
 
     background_tasks.add_task(_execute_batch, batch.batch_id, "db_fetch", {}, payload.rule_ids)
     return _batch_payload(db, batch)
+
+
+@router.get("/source/objects")
+def list_source_objects(source_system: str = "MySQL", db: Session = Depends(get_db)):
+    """
+    What is ACTUALLY in the selected source, not what the catalog claims.
+
+    The Runs page used to filter ENTITIES by source_system, which meant an
+    object was invisible unless someone had hand-labelled it with the right
+    system -- and "MySQL" showed nothing at all even though every table lives
+    in MySQL. Source is a CONNECTION, so this introspects it.
+
+    Each table is then matched to the catalog by source_object_name to answer
+    the only question that matters: can this be run?
+
+        runnable    declared in ENTITIES and has >=1 approved rule
+        no_rules    declared, but nothing approved to run against it
+        undeclared  a real table with no ENTITIES entry -- its CDE columns and
+                    primary key are unknown, so there is nothing to validate.
+                    Shown rather than hidden so the table is not a mystery.
+
+    Staging tables are excluded: they are this app's own scratch space.
+    """
+    from sqlalchemy import create_engine, inspect as sa_inspect
+
+    from ..ingestion import source_url_for
+    from ..models import staging_table_name
+
+    url = source_url_for(source_system)
+    if not url:
+        raise HTTPException(400, f"No connection configured for '{source_system}'.")
+
+    try:
+        eng = create_engine(url)
+        tables = sorted(sa_inspect(eng).get_table_names())
+        eng.dispose()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"Could not read {source_system}: {exc}")
+
+    counts = dict(db_config_counts())
+    by_table = {m["source_object_name"].lower(): (name, m)
+                for name, m in ENTITIES.items()}
+    ours = {staging_table_name(n) for n in ENTITIES}
+
+    out = []
+    for t in tables:
+        if t.lower() in ours or t.lower().startswith("stg_"):
+            continue
+        hit = by_table.get(t.lower())
+        if hit is None:
+            out.append({"table_name": t, "entity_name": None, "approved_rule_count": 0,
+                        "element_count": 0, "status": "undeclared"})
+            continue
+        name, meta = hit
+        n = counts.get(name, 0)
+        out.append({
+            "table_name": t, "entity_name": name, "approved_rule_count": n,
+            "element_count": len(meta["columns"]),
+            "status": "runnable" if n else "no_rules",
+        })
+    return out
+
+
+def db_config_counts():
+    """Approved, active rule count per entity. Rules live in CONFIG_DB."""
+    from ..database import ConfigSession
+    cdb = ConfigSession()
+    try:
+        return (cdb.query(ValRule.entity_name, func.count(ValRule.rule_id))
+                .filter(ValRule.status == "APPROVED", ValRule.active == True)  # noqa: E712
+                .group_by(ValRule.entity_name).all())
+    finally:
+        cdb.close()
 
 
 @router.get("/source/check")

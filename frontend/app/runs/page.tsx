@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { API_BASE, SOURCE_SYSTEMS, api, Batch, Entity, SourceCheck, getActor } from "@/lib/api";
+import { API_BASE, SOURCE_SYSTEMS, api, Batch, Entity, SourceCheck, SourceObject, getActor } from "@/lib/api";
 
 interface FileSlot { file: File | null; entity: string }
 
@@ -20,6 +20,10 @@ export default function RunsPage() {
   const [check, setCheck] = useState<SourceCheck | null>(null);
   const [checking, setChecking] = useState(false);
   const [dbSource, setDbSource] = useState("MySQL");
+  // Tables actually present in the selected source. Loaded from the server,
+  // not derived from `entities` -- see api.sourceObjects.
+  const [srcObjects, setSrcObjects] = useState<SourceObject[] | null>(null);
+  const [srcError, setSrcError] = useState<string | null>(null);
 
   useEffect(() => {
     api.entities().then((e) => {
@@ -29,6 +33,16 @@ export default function RunsPage() {
     refresh();
     return () => clearInterval(pollRef.current);
   }, []);
+
+  // re-introspect whenever the source changes
+  useEffect(() => {
+    let stale = false;
+    setSrcObjects(null); setSrcError(null);
+    api.sourceObjects(dbSource)
+      .then((o) => { if (!stale) setSrcObjects(o); })
+      .catch((e) => { if (!stale) { setSrcObjects([]); setSrcError(String(e.message || e)); } });
+    return () => { stale = true; };
+  }, [dbSource]);
 
   function refresh() {
     api.batches().then((b) => {
@@ -166,24 +180,40 @@ export default function RunsPage() {
                 )}
                 {!check && <span className="mini dim">Test the source before running.</span>}
               </div>
-              {entities.filter((e) => e.source_system === dbSource).map((e) => {
-                const disabled = e.approved_rule_count === 0;
+              {srcObjects === null && <p className="mini dim">Reading tables from {dbSource}…</p>}
+              {srcObjects?.map((o) => {
+                const disabled = o.status !== "runnable";
+                const label = o.entity_name ?? o.table_name;
                 return (
-                  <label key={e.entity_name} className={`entrow${disabled ? " off" : ""}`}>
-                    <input type="checkbox" disabled={disabled}
-                           checked={dbSelected.includes(e.entity_name)}
-                           onChange={(ev) => setDbSelected(ev.target.checked
-                             ? [...dbSelected, e.entity_name]
-                             : dbSelected.filter((x) => x !== e.entity_name))} />
-                    <span className="en">{e.entity_name}</span>
+                  <label key={o.table_name} className={`entrow${disabled ? " off" : ""}`}>
+                    {/* An undeclared table gets no checkbox at all -- there is
+                        nothing to select, so offering a disabled box just
+                        invites clicking it. The row stays visible so the table
+                        is accounted for rather than mysteriously absent. */}
+                    {o.status === "undeclared"
+                      ? <span className="box-none" aria-hidden />
+                      : <input type="checkbox" disabled={disabled}
+                               checked={!!o.entity_name && dbSelected.includes(o.entity_name)}
+                               onChange={(ev) => o.entity_name && setDbSelected(ev.target.checked
+                                 ? [...dbSelected, o.entity_name]
+                                 : dbSelected.filter((x) => x !== o.entity_name))} />}
+                    <span className="en">{label}</span>
                     <span className="mini dim">
-                      {disabled ? "no approved rules — nothing to run" : `${e.approved_rule_count} approved rule${e.approved_rule_count === 1 ? "" : "s"}`}
+                      {o.status === "runnable"
+                        && `${o.table_name} · ${o.element_count} elements · ${o.approved_rule_count} approved rule${o.approved_rule_count === 1 ? "" : "s"}`}
+                      {o.status === "no_rules"
+                        && `${o.table_name} · ${o.element_count} elements · no approved rules — nothing to run`}
+                      {o.status === "undeclared"
+                        && `${o.table_name} · this object is not part of our system`}
                     </span>
                   </label>
                 );
               })}
-              {entities.filter((e) => e.source_system === dbSource).length === 0 && (
-                <p className="mini dim">No objects are configured for {dbSource}.</p>
+              {srcObjects?.length === 0 && (
+                <p className="mini dim">
+                  {srcError ? `Could not read ${dbSource}: ${srcError}`
+                            : `${dbSource} has no tables.`}
+                </p>
               )}
               <div className="form-actions">
                 <button className="btn-primary" onClick={submitDbRun}

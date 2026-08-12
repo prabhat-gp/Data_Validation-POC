@@ -214,6 +214,19 @@ export interface BatchOption {
 
 export interface SourceCheck { ok: boolean; detail: string }
 
+/**
+ * A real table in the selected source, matched against the catalog.
+ * The list comes from introspecting the CONNECTION, not from filtering
+ * ENTITIES -- a source is a place you connect to, not a label.
+ */
+export interface SourceObject {
+  table_name: string;
+  entity_name: string | null;       // null = no catalog entry for this table
+  approved_rule_count: number;
+  element_count: number;
+  status: "runnable" | "no_rules" | "undeclared";
+}
+
 /** Runnable SQL that returns the rows a rule failed on, from the SOURCE db. */
 export interface ViolationQuery {
   sql: string;
@@ -240,6 +253,8 @@ export const api = {
     get<BatchOption[]>(`/api/dashboard/batch-options${sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : ""}`),
   checkSource: (sourceSystem: string) =>
     get<SourceCheck>(`/api/runs/source/check?source_system=${encodeURIComponent(sourceSystem)}`),
+  sourceObjects: (sourceSystem: string) =>
+    get<SourceObject[]>(`/api/runs/source/objects?source_system=${encodeURIComponent(sourceSystem)}`),
   drilldown: (entityName: string, sourceSystem?: string) =>
     get<Drilldown>(`/api/dashboard/object/${encodeURIComponent(entityName)}/drilldown` +
       (sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : "")),
