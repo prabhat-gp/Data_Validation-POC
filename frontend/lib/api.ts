@@ -268,14 +268,23 @@ export const api = {
 };
 
 /**
- * The six quality dimensions, in heatmap column order. Must stay identical to
- * DIMENSIONS in backend/app/rule_compiler.py -- a name here that the engine
- * never emits becomes a column of permanent dashes, and one the engine emits
- * that is missing here silently hides real failures from the heatmap.
+ * The six quality dimensions, in display order. Used for the heatmap columns
+ * AND as the default sort of the element drilldown, so the two views always
+ * agree. Must stay identical in MEMBERSHIP to DIMENSIONS in
+ * backend/app/rule_compiler.py -- a name here that the engine never emits
+ * becomes a column of permanent dashes, and one the engine emits that is
+ * missing here silently hides real failures from the heatmap. The ORDER is
+ * presentation only and safe to change.
  */
 export const DIMENSION_ORDER = [
-  "Completeness", "Validity", "Uniqueness", "Consistency", "Integrity", "Accuracy",
+  "Completeness", "Uniqueness", "Validity", "Consistency", "Integrity", "Accuracy",
 ];
+
+/** Position in DIMENSION_ORDER; unknown dimensions sort last, not first. */
+export function dimensionRank(d: string): number {
+  const i = DIMENSION_ORDER.indexOf(d);
+  return i === -1 ? DIMENSION_ORDER.length : i;
+}
 
 // No DIMENSION_FOR_TYPE map here on purpose. Dimension is decided by the
 // backend from rule_type and returned on the rule, so the frontend never has a

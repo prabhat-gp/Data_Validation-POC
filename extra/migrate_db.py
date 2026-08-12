@@ -1,22 +1,33 @@
 """
 migrate_db.py
 -------------
-Adds columns that exist in the models but not yet in the database.
+Brings an existing database up to what the models now declare.
 
 create_tables.py uses SQLAlchemy's create_all(), which only ever creates
 MISSING TABLES -- it never alters an existing one. So a machine that was set up
-before a column was added keeps the old table and fails at query time with:
+before a change keeps the old table and fails at query time with:
 
     (1054, "Unknown column 'val_runs.total_records' in 'field_list'")
 
-This compares every declared column against information_schema and issues
-ALTER TABLE ... ADD COLUMN for the gaps. Existing rows and columns are never
-touched, and nothing is ever dropped -- so it is safe to run on a database you
-care about, and safe to run twice.
+Three kinds of drift are reconciled, across all THREE databases:
+
+  1. missing columns   ALTER TABLE ... ADD COLUMN
+  2. changed types     ALTER TABLE ... MODIFY COLUMN
+                       Specifically TEXT -> VARCHAR(n) on the staging tables:
+                       a TEXT column cannot carry an ordinary index (and is a
+                       CLOB on Oracle, where it cannot be joined at all).
+  3. missing indexes   CREATE INDEX / DROP INDEX
+                       Staging join keys, and the trailing violation_id that
+                       makes keyset paging an index range scan.
+
+SAFETY: no column and no row is ever dropped. Indexes ARE dropped when they
+are no longer declared -- an index holds no data, and a redundant one costs
+write throughput on every staged row. Everything is idempotent, so running it
+twice is a no-op.
 
 Usage:
-    python migrate_db.py            # show what is missing, change nothing
-    python migrate_db.py --apply    # actually add the columns
+    python migrate_db.py            # show the plan, change nothing
+    python migrate_db.py --apply    # execute it
 """
 
 import os
@@ -30,9 +41,12 @@ import sys
 
 from sqlalchemy import bindparam, inspect, text
 
-from app.database import config_engine, results_engine
-from app.models import ConfigBase, ResultsBase
+from app.database import config_engine, results_engine, source_engine
+from app.models import ConfigBase, ResultsBase, StagingBase
 from app.rule_compiler import RETIRED_DIMENSIONS, RULE_TYPE_META
+
+# TEXT-family types that must become VARCHAR so they can be indexed.
+_TEXTY = ("TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT", "CLOB", "NCLOB")
 
 
 def column_ddl(col, dialect):
@@ -87,6 +101,150 @@ def apply(engine, todo):
         for table, col, ddl, _ in todo:
             conn.execute(text(f"ALTER TABLE `{table}` ADD COLUMN {ddl}"))
             print(f"  added {table}.{col}")
+
+
+def plan_types(engine, base, label):
+    """
+    Columns declared VARCHAR(n) that are still TEXT (or the wrong length).
+
+    Deliberately narrow. A general "does the declared type match" diff throws
+    false positives on every backend (INT vs INTEGER, DATETIME vs TIMESTAMP)
+    and would emit pointless ALTERs. This looks only for the change that
+    actually matters: a column that must become indexable.
+    """
+    insp = inspect(engine)
+    existing = set(insp.get_table_names())
+    todo = []
+
+    for table in base.metadata.sorted_tables:
+        if table.name not in existing:
+            continue
+        actual = {c["name"]: c for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            a = actual.get(col.name)
+            if a is None:
+                continue                       # plan() already reports it
+            want = col.type.compile(engine.dialect).upper()
+            have = str(a["type"]).upper()
+            if not want.startswith("VARCHAR"):
+                continue
+            if have.split("(")[0] in _TEXTY or (have.startswith("VARCHAR") and have != want):
+                todo.append((table.name, col.name, have, want, col))
+
+    print(f"\n=== {label} column types -> {engine.url.database} ===")
+    if not todo:
+        print("  all declared types match")
+    for t, c, have, want, _ in todo:
+        print(f"  ~ {t}.{c:<20} {have} -> {want}")
+    return todo
+
+
+def apply_types(engine, todo):
+    """
+    MODIFY COLUMN, but never silently truncate. A value longer than the target
+    length would be cut (or rejected outright in strict mode), so any such
+    column is reported and SKIPPED rather than quietly losing data.
+    """
+    for table, col, have, want, column in todo:
+        limit = getattr(column.type, "length", None)
+        with engine.connect() as conn:
+            rows = conn.execute(text(f"SELECT COUNT(*) FROM `{table}`")).scalar() or 0
+            too_long = 0
+            if rows and limit:
+                too_long = conn.execute(
+                    text(f"SELECT COUNT(*) FROM `{table}` "
+                         f"WHERE CHAR_LENGTH(`{col}`) > :n"), {"n": limit}).scalar() or 0
+        if too_long:
+            print(f"  SKIPPED {table}.{col} -- {too_long} value(s) longer than {limit} chars. "
+                  f"Widen it via ENTITIES['...']['column_lengths'] and re-run.")
+            continue
+        null_sql = "NULL" if column.nullable else "NOT NULL"
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE `{table}` MODIFY `{col}` {want} {null_sql}"))
+        print(f"  changed {table}.{col} -> {want}")
+
+
+def plan_indexes(engine, base, label):
+    """Declared indexes the database is missing, and stale ones it still has."""
+    insp = inspect(engine)
+    existing = set(insp.get_table_names())
+    create, drop = [], []
+
+    for table in base.metadata.sorted_tables:
+        if table.name not in existing:
+            continue
+        have = {ix["name"]: list(ix["column_names"])
+                for ix in insp.get_indexes(table.name) if ix.get("name")}
+        want = {ix.name: [c.name for c in ix.columns] for ix in table.indexes}
+
+        for name, cols in want.items():
+            if name not in have:
+                create.append((table.name, name, cols))
+            elif have[name] != cols:
+                # column list changed -- e.g. violation_id appended for keyset
+                drop.append((table.name, name, f"columns changed {have[name]} -> {cols}"))
+                create.append((table.name, name, cols))
+        for name, cols in have.items():
+            # only our own ix_* indexes; never touch PRIMARY or a unique
+            # constraint backing an application invariant
+            if name not in want and name.startswith("ix_"):
+                drop.append((table.name, name, "no longer declared -- redundant"))
+
+    print(f"\n=== {label} indexes -> {engine.url.database} ===")
+    if not create and not drop:
+        print("  all declared indexes present")
+    for t, n, why in drop:
+        print(f"  - {t}.{n:<32} {why}")
+    for t, n, cols in create:
+        print(f"  + {t}.{n:<32} ({', '.join(cols)})")
+    return create, drop
+
+
+def apply_indexes(engine, create, drop):
+    """
+    Order matters, and not just for tidiness.
+
+    val_violations.run_id carries a foreign key to val_runs, and MySQL refuses
+    to drop the LAST index that a foreign key can use:
+
+        (1553, "Cannot drop index 'ix_violation_run_severity':
+                needed in a foreign key constraint")
+
+    Dropping all three run_id-leading indexes before creating any replacement
+    hits exactly that. So brand-new indexes go in FIRST -- ix_violation_run
+    (run_id, violation_id) satisfies the constraint -- and only then is
+    anything removed. Indexes being rebuilt under the same name still have to
+    be dropped immediately before their create, so they are handled as pairs.
+    """
+    def sql_cols(cols):
+        return ", ".join(f"`{c}`" for c in cols)
+
+    rebuilt = {(t, n) for t, n, _ in drop} & {(t, n) for t, n, _ in create}
+
+    # 1. brand-new names -- nothing to drop, and these keep any FK satisfied
+    for table, name, cols in create:
+        if (table, name) in rebuilt:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"CREATE INDEX `{name}` ON `{table}` ({sql_cols(cols)})"))
+        print(f"  created {table}.{name}")
+
+    # 2. same name, different columns -- drop and recreate as one step
+    for table, name, cols in create:
+        if (table, name) not in rebuilt:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP INDEX `{name}` ON `{table}`"))
+            conn.execute(text(f"CREATE INDEX `{name}` ON `{table}` ({sql_cols(cols)})"))
+        print(f"  rebuilt {table}.{name}")
+
+    # 3. genuinely stale, nothing replacing them
+    for table, name, _ in drop:
+        if (table, name) in rebuilt:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f"DROP INDEX `{name}` ON `{table}`"))
+        print(f"  dropped {table}.{name}")
 
 
 def backfill_dimensions(do_it):
@@ -163,23 +321,46 @@ def backfill_dimensions(do_it):
 
 def main():
     do_it = "--apply" in sys.argv
-    work = [
-        (config_engine, plan(config_engine, ConfigBase, "CONFIG_DB")),
-        (results_engine, plan(results_engine, ResultsBase, "TARGET_DB")),
+    targets = [
+        (source_engine, StagingBase, "SOURCE_DB"),
+        (config_engine, ConfigBase, "CONFIG_DB"),
+        (results_engine, ResultsBase, "RESULTS_DB"),
     ]
-    total = sum(len(t) for _, t in work)
 
-    if total and do_it:
-        print()
-        for engine, todo in work:
-            if todo:
-                apply(engine, todo)
-        print(f"\n{total} column(s) added.")
+    cols = [(e, plan(e, b, l)) for e, b, l in targets]
+    types = [(e, plan_types(e, b, l)) for e, b, l in targets]
+    idx = [(e, *plan_indexes(e, b, l)) for e, b, l in targets]
+
+    n_cols = sum(len(t) for _, t in cols)
+    n_types = sum(len(t) for _, t in types)
+    n_idx = sum(len(c) + len(d) for _, c, d in idx)
+    total = n_cols + n_types + n_idx
+
+    if do_it:
+        # order matters: add columns, then fix their types, then index them
+        if n_cols:
+            print()
+            for engine, todo in cols:
+                if todo:
+                    apply(engine, todo)
+        if n_types:
+            print()
+            for engine, todo in types:
+                if todo:
+                    apply_types(engine, todo)
+        if n_idx:
+            print()
+            for engine, create, drop in idx:
+                if create or drop:
+                    apply_indexes(engine, create, drop)
+        print(f"\n{n_cols} column(s) added, {n_types} type(s) changed, "
+              f"{n_idx} index change(s).")
     elif total:
-        print(f"\n{total} column(s) missing -- run with --apply to add them.")
+        print(f"\n{n_cols} column(s) missing, {n_types} type(s) wrong, "
+              f"{n_idx} index change(s) pending.")
 
     # runs after the columns exist, so a fresh DB migrates in one pass
-    if not total or do_it:
+    if not n_cols or do_it:
         backfill_dimensions(do_it)
 
     if do_it:

@@ -55,6 +55,29 @@ def utcnow():
 #                          actionable ("record 001xx failed", not "row 4782")
 #   columns             -> the CDEs. ONLY these are staged; a 443-column source
 #                          export is pruned to just this list during ingestion.
+#   index_columns       -> staging columns that get an index. OPTIONAL.
+#   column_lengths      -> per-column VARCHAR length override. OPTIONAL.
+#
+# WHICH COLUMNS BELONG IN index_columns
+# -------------------------------------
+# Only the ones a rule JOINS or GROUPS on -- an index earns its keep on those
+# and costs insert time on every other. Three rule types drive the list:
+#
+#   REFERENTIAL_INTEGRITY  the child's FK column, and the parent's lookup
+#                          column when it is NOT the parent's primary key
+#                          (when it IS, the compiler rewrites it to
+#                          record_key, which every staging table indexes
+#                          by default)
+#   UNIQUENESS             the field it de-duplicates on
+#   AGGREGATION            its groupBy columns
+#
+# Everything else -- COMPLETENESS, VALIDITY, ALLOWED_VALUES, CROSS_FIELD,
+# CUSTOM_SQL -- is a per-row predicate that reads the whole run anyway, so an
+# index would be ignored by the planner and paid for on every insert.
+#
+# Measured on 1M rows: a referential-integrity join went from not finishing in
+# 23 minutes to 16.5s once its key was indexed, on the DEFAULT join buffer.
+# See extra/scale_test.py.
 # Where data can come from. Drives the dashboard filter and the Runs page.
 SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"]
 
@@ -71,6 +94,13 @@ ENTITIES: dict = {
             "ShippingCity", "ShippingCountry", "ShippingPostalCode", "ShippingState",
             "ShippingStreet", "Type", "Website", "Region__c",
         ],
+        # Name only: UNIQUENESS goes 1.95s -> 0.19s at 150k rows.
+        # Website was declared here for its AGGREGATION groupBy and REMOVED --
+        # measured at 1.25s vs 1.36s, i.e. no benefit. A GROUP BY that has no
+        # HAVING-independent filter reads every row of the run anyway, so the
+        # index only adds write cost. Grouping alone does not justify an index;
+        # a JOIN or an equality lookup does.
+        "index_columns": ["Name"],
     },
     # --- Hybris -----------------------------------------------------------
     # Only the YELLOW-highlighted columns from data_dump/*.xlsx are declared.
@@ -82,11 +112,14 @@ ENTITIES: dict = {
         "source_object_name": "b2bcustomer",
         "primary_key_field": "pk",
         "columns": [
-            "uid", "originalUid", "name", "email", "phone",
+            "originalUid", "name", "email", "phone",
             "active", "loginDisabled", "creationtime",
             "defaultB2BUnit", "hwCustomerType", "toolAccess",
             "sessionCurrency", "sessionLanguage", "sfdcContactId",
         ],
+        # defaultB2BUnit: REFERENTIAL_INTEGRITY -> B2B Unit.uid.
+        # The other three: UNIQUENESS.
+        "index_columns": ["defaultB2BUnit", "originalUid", "email", "sfdcContactId"],
     },
     "B2B Unit": {
         "source_system": "Hybris",
@@ -95,7 +128,17 @@ ENTITIES: dict = {
         "columns": [
             "uid", "name", "locName_en", "accountType",
             "active", "orderBlock", "sfdcServiceLayer",
+            # not yellow, but declared so Address referential integrity can
+            # use it: b2bunit.addresses -> address.pk
+            "addresses",
         ],
+        # uid: the LOOKUP TARGET of B2B Customer.defaultB2BUnit, and it is not
+        #      this entity's pk, so it needs its own index. This is the one
+        #      that took referential integrity from "did not finish in 23
+        #      minutes" to 16.5s at 1M rows.
+        # addresses: REFERENTIAL_INTEGRITY -> Address.pk.
+        # name: UNIQUENESS.
+        "index_columns": ["uid", "addresses", "name"],
     },
     "Address": {
         "source_system": "Hybris",
@@ -103,8 +146,12 @@ ENTITIES: dict = {
         "primary_key_field": "pk",
         "columns": [
             "country", "postalcode", "billingAddress", "shippingAddress",
-            "saveAddress", "duplicate",
+            "saveAddress",
         ],
+        # B2B Unit.addresses points at this entity's pk, which the compiler
+        # rewrites to record_key -- already indexed on every staging table.
+        # Nothing else here is joined or grouped on.
+        "index_columns": [],
     },
 }
 
@@ -296,10 +343,17 @@ class ValViolation(ResultsBase):
     severity = Column(String(20), nullable=False)
     dimension = Column(String(40), nullable=False)
 
+    # Every index ends in violation_id because the worklist pages by KEYSET
+    # (`WHERE violation_id > :cursor ORDER BY violation_id`) -- see
+    # routers/violations.py. InnoDB appends the primary key to a secondary
+    # index implicitly, so on MySQL alone the trailing column is free; Oracle
+    # does not, and without it the range scan degrades into a sort of every
+    # matching row. Naming it explicitly keeps both backends on the same plan.
     __table_args__ = (
-        Index("ix_violation_run_entity", "run_id", "entity_name"),
-        Index("ix_violation_run_rule", "run_id", "rule_id"),
-        Index("ix_violation_run_severity", "run_id", "severity"),
+        Index("ix_violation_run", "run_id", "violation_id"),
+        Index("ix_violation_run_entity", "run_id", "entity_name", "violation_id"),
+        Index("ix_violation_run_rule", "run_id", "rule_id", "violation_id"),
+        Index("ix_violation_run_severity", "run_id", "severity", "violation_id"),
     )
 
 
@@ -316,18 +370,70 @@ class ValViolation(ResultsBase):
 # Physical columns (not JSON/EAV) so a compiled rule can say `WHERE Name IS NULL`
 # against a real column and stay fast and indexable. Generated at import time
 # from a constant, so there is never a runtime CREATE TABLE.
+#
+# WHY String() AND NOT Text
+# -------------------------
+# Text renders as CLOB on Oracle, and a CLOB cannot carry an ordinary B-tree
+# index -- a REFERENTIAL_INTEGRITY join on one is not merely slow, it does not
+# work without a function-based index on DBMS_LOB.SUBSTR. MySQL hides this
+# behind prefix indexes (`col(32)`), which is why the problem only showed up
+# under load. String(n) is VARCHAR on MySQL/Postgres and VARCHAR2 on Oracle:
+# indexable and joinable everywhere, with no dialect-specific tuning.
+#
+# 255 chars = 1020 bytes in utf8mb4, comfortably inside InnoDB's 3072-byte
+# index key limit and Oracle's per-block limit. A column that genuinely needs
+# more can override via "column_lengths" below -- it just cannot be a join key.
+STAGING_COLUMN_LENGTH = 255
+
+# Longest identifier Oracle accepted before 12.2. Index names are global there
+# (not per-table as in MySQL), so they are prefixed with the table name and
+# clipped to fit rather than risking a name collision at migration time.
+_MAX_IDENTIFIER = 30
+
+
+def _index_name(table: str, column: str) -> str:
+    """
+    ix_<entity>_<column>. The shared "stg_" prefix is dropped -- it carries no
+    information (every table here has it) and those four characters are what
+    pushes the longest names past Oracle's limit.
+    """
+    return f"ix_{table[4:] if table.startswith('stg_') else table}_{column.lower()}"
+
+
 STAGING_MODELS: dict = {}
 
 for _entity, _meta in ENTITIES.items():
+    _table = staging_table_name(_entity)
+    _lengths = _meta.get("column_lengths", {})
     _attrs = {
-        "__tablename__": staging_table_name(_entity),
+        "__tablename__": _table,
         "id": Column(Integer, primary_key=True),      # surrogate; NOT the source Id
-        "run_id": Column(Integer, nullable=False, index=True),
+        # No index=True here on purpose. Every index below LEADS with run_id,
+        # so a standalone one would be redundant -- and each redundant index
+        # costs roughly 14s per million rows staged (measured).
+        "run_id": Column(Integer, nullable=False),
         "record_key": Column(String(120), nullable=False),
         "loaded_at": Column(DateTime, default=utcnow),
     }
     for _col in _meta["columns"]:
-        _attrs[_col] = Column(_col, Text)
+        _attrs[_col] = Column(_col, String(_lengths.get(_col, STAGING_COLUMN_LENGTH)))
+
+    # Every index is (run_id, <key>): a staging table holds one run at a time
+    # in normal use, but the leading run_id keeps the index selective if a
+    # previous run's rows have not been cleared yet.
+    _indexes = [
+        # record_key is the lookup target of EVERY referential-integrity rule
+        # that points at a primary key -- the compiler rewrites the parent's
+        # `lookupField` to `record_key` when it is that entity's pk. So this
+        # one is not optional and is not per-entity.
+        Index(_index_name(_table, "record_key"), "run_id", "record_key"),
+    ]
+    _indexes += [
+        Index(_index_name(_table, _col), "run_id", _col)
+        for _col in _meta.get("index_columns", [])
+    ]
+    _attrs["__table_args__"] = tuple(_indexes)
+
     STAGING_MODELS[_entity] = type(
         f"Stg{re.sub(r'[^A-Za-z0-9]', '', _entity)}", (StagingBase,), _attrs
     )

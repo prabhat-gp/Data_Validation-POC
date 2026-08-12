@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Rule, api, BatchOption, Kpis, HeatmapRow, TopFailingItem, TrendPoint, FixProfile, CriticalByDimension, Drilldown, DrilldownElement } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { Rule, api, BatchOption, Kpis, HeatmapRow, TopFailingItem, TrendPoint, FixProfile, CriticalByDimension, Drilldown, DrilldownElement, dimensionRank } from "@/lib/api";
 import Heatmap from "./Heatmap";
 import DonutChart from "./DonutChart";
 import TrendChart from "./TrendChart";
@@ -152,14 +152,20 @@ function Overview({ onSelectObject, onObjects, batchId, source }: {
 
       <div className="row" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
         <div className="panel">
-          <h4>Top Failing Data Elements <span className="hint">across all objects</span></h4>
+          <h4>Top Failing Data Elements <span className="hint">% of checked records failing</span></h4>
           <div className="flist">
-            {topFailing.map((t) => (
-              <div className="frow" key={`${t.object_name}-${t.element_name}`}>
-                <span className="fname">{t.element_name}<small>{t.object_name}</small></span>
-                <span className={`fscore tone-${t.score_pct > 90 ? "good" : t.score_pct >= 80 ? "warn" : "crit"}`}>{t.score_pct}%</span>
-              </div>
-            ))}
+            {/* The card is about FAILURE, so it shows the failure rate, not the
+                score. "Industry 0%" read as if nothing were wrong when in fact
+                every row failed -- it is 100% failing. */}
+            {topFailing.map((t) => {
+              const failPct = Math.round((100 - t.score_pct) * 10) / 10;
+              return (
+                <div className="frow" key={`${t.object_name}-${t.element_name}`}>
+                  <span className="fname">{t.element_name}<small>{t.object_name}</small></span>
+                  <span className={`fscore tone-${failPct < 10 ? "good" : failPct <= 20 ? "warn" : "crit"}`}>{failPct}%</span>
+                </div>
+              );
+            })}
             {topFailing.length === 0 && <p className="mini">No failures recorded.</p>}
           </div>
         </div>
@@ -191,6 +197,33 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
   const [error, setError] = useState<string | null>(null);
   // which rule produced the row the user clicked, plus that row's numbers
   const [ruleDetail, setRuleDetail] = useState<{ rule: Rule; result: RuleRunResult } | null>(null);
+  // null = the default grouping by dimension. Clicking Score or Failed takes
+  // over; clicking the same header again flips direction.
+  const [sort, setSort] = useState<{ col: "score_pct" | "records_failed"; dir: 1 | -1 } | null>(null);
+
+  function toggleSort(col: "score_pct" | "records_failed") {
+    setSort((s) => (s && s.col === col ? { col, dir: (s.dir === 1 ? -1 : 1) as 1 | -1 }
+                                       : { col, dir: 1 }));
+  }
+  function sortArrow(col: "score_pct" | "records_failed") {
+    if (!sort || sort.col !== col) return "";
+    return sort.dir === 1 ? " ▲" : " ▼";
+  }
+
+  const rows = useMemo(() => {
+    const list = [...(data?.elements ?? [])];
+    if (sort) {
+      // stable tiebreak on element name so equal values do not jitter
+      list.sort((a, b) => (a[sort.col] - b[sort.col]) * sort.dir
+                          || a.element_name.localeCompare(b.element_name));
+    } else {
+      // grouped by dimension, worst score first inside each group
+      list.sort((a, b) => dimensionRank(a.dimension) - dimensionRank(b.dimension)
+                          || a.score_pct - b.score_pct
+                          || a.element_name.localeCompare(b.element_name));
+    }
+    return list;
+  }, [data, sort]);
 
   async function showRule(el: DrilldownElement) {
     try {
@@ -268,10 +301,18 @@ function ObjectDrilldown({ objectId, source, objects, onSelectObject, onBack }: 
           <h4>{data.object_name} · Data Elements <span className="hint">{data.checks_run} checks across {data.elements_checked} element{data.elements_checked === 1 ? "" : "s"} · click a row to see the rule behind it</span></h4>
           <table className="cde">
             <thead>
-              <tr><th>Element</th><th>Dimension</th><th>Score</th><th>Failed</th><th>Severity</th></tr>
+              <tr>
+                <th>Element</th>
+                <th>Dimension</th>
+                <th className="th-sort" onClick={() => toggleSort("score_pct")}
+                    title="Sort by score">Score{sortArrow("score_pct")}</th>
+                <th className="th-sort" onClick={() => toggleSort("records_failed")}
+                    title="Sort by failed records">Failed{sortArrow("records_failed")}</th>
+                <th>Severity</th>
+              </tr>
             </thead>
             <tbody>
-              {data.elements.map((el, i) => (
+              {rows.map((el, i) => (
                 <tr key={`${el.element_name}-${el.dimension}-${i}`}
                     className="clickable" onClick={() => showRule(el)}>
                   <td className="el">{el.element_name}</td>

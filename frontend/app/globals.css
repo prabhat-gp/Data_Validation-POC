@@ -240,6 +240,10 @@ table.heat td.cell {
 .cde tbody tr:hover { background: var(--panel-2); }
 .cde .el { font-family: var(--font-brand); font-weight: 500; color: var(--ink); }
 .cde .sc { font-family: var(--font-brand); font-weight: 500; }
+/* Sortable headers: click toggles asc/desc, hover shows it is clickable.
+   Sorting on hover alone would move rows out from under the pointer. */
+.cde th.th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+.cde th.th-sort:hover { color: var(--accent); }
 .badge { font-size: 9.5px; font-weight: 500; padding: 3px 8px; border-radius: 5px; text-transform: uppercase; letter-spacing: normal; }
 .b-crit { background: var(--crit-bg); color: var(--crit); }
 .b-warn { background: var(--warn-bg); color: var(--warn); }
