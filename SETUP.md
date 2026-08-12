@@ -41,8 +41,8 @@ CREATE DATABASE IF NOT EXISTS results_db;
 
 **3. Point the app at them**
 
-Copy `backend/.env.example` to `backend/.env` and set `DB_PASSWORD`.
-`backend/.env` is gitignored and never leaves the machine.
+`backend/.env` is tracked, so the clone already has it. Set `DB_PASSWORD` to
+this machine's MySQL password — everything else is already correct.
 
 **4. Build the schema**
 

@@ -49,7 +49,7 @@ is showing someone the wrong rows to go and fix.
 ```bash
 git clone https://github.com/HON-AEROIT/smtc-data-validation.git
 cd smtc-data-validation
-cp backend/.env.example backend/.env     # then fill in DB_PASSWORD by hand
+# backend/.env comes with the clone -- just set DB_PASSWORD for this machine
 ```
 
 `backend/.env` is gitignored and never leaves the machine. Full setup steps are

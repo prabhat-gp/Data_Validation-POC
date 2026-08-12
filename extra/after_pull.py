@@ -16,13 +16,23 @@ WHAT IT DOES, IN ORDER
     2. migrate_db      reconciles tables that DO exist: missing columns, the
                        TEXT -> VARCHAR(255) change on staging, and the
                        declared indexes. Drops no column and no row.
-    3. seed rules      loads the 39 approved Hybris rules. Account rules are
-                       left alone unless --reseed-account is given.
-    4. verify          counts rules per object, compiles every one of them,
+    3. reset_db        --fresh only. Deletes every rule and all run history,
+                       and resets the auto-increment counters. Without it,
+                       deleting rules leaves gaps: rules removed at ids 1-8
+                       stay gone and the next rule starts at 9. source_db and
+                       its data are never touched.
+    4. seed rules      --rules account | hybris | all | none.
+    5. verify          counts rules per object, compiles every one of them,
                        and confirms the staging schema matches the models.
+                       This is what catches a rule pointing at an object the
+                       code no longer has -- those score 0.0% silently at run
+                       time instead of failing.
 
-Safe to run twice -- every step is idempotent. Steps 1-3 are skipped without
---apply; step 4 always runs, so a dry run still tells you where you stand.
+Safe to run twice -- every step is idempotent. Steps 1-4 are skipped without
+--apply; step 5 always runs, so a dry run still tells you where you stand.
+
+    # rebuild config + results from scratch, Account rules only
+    python after_pull.py --apply --fresh --rules account
 """
 
 import argparse
@@ -159,18 +169,27 @@ def verify():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="actually make changes")
-    ap.add_argument("--reseed-account", action="store_true",
-                    help="also reload the 20 Account rules")
+    ap.add_argument("--fresh", action="store_true",
+                    help="wipe ALL rules and ALL run history first, and reset the "
+                         "id counters so the next rule is #1. source_db is untouched.")
+    ap.add_argument("--rules", choices=["account", "hybris", "all", "none"],
+                    default="all",
+                    help="which rule sets to load (default: all)")
     args = ap.parse_args()
 
     if not args.apply:
         print("DRY RUN -- nothing will be changed. Re-run with --apply.\n")
 
+    # Tables must exist before anything can be deleted from them, and the
+    # wipe must precede seeding or the new rules land behind the old ids.
     run("create_tables.py", [], args.apply)
     run("migrate_db.py", ["--apply"], args.apply)
-    run("seed_rules_hybris.py", ["--direct", "--clear"], args.apply)
-    if args.reseed_account:
+    if args.fresh:
+        run("reset_db.py", ["--apply"], args.apply)
+    if args.rules in ("account", "all"):
         run("seed_rules_account.py", ["--direct", "--clear"], args.apply)
+    if args.rules in ("hybris", "all"):
+        run("seed_rules_hybris.py", ["--direct", "--clear"], args.apply)
 
     code = verify()
     if not args.apply:

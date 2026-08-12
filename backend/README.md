@@ -16,7 +16,7 @@ and, for referential integrity, joins another `stg_*` — never crosses a
 database boundary.
 
 Connection comes from `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` plus
-`SOURCE_DB` / `CONFIG_DB` / `RESULTS_DB`. See `.env.example`.
+`SOURCE_DB` / `CONFIG_DB` / `RESULTS_DB`, all in `backend/.env`.
 
 ## Run
 
