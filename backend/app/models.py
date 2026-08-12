@@ -72,7 +72,40 @@ ENTITIES: dict = {
             "ShippingStreet", "Type", "Website", "Region__c",
         ],
     },
-    # Hybris objects get added here as their dumps arrive.
+    # --- Hybris -----------------------------------------------------------
+    # Only the YELLOW-highlighted columns from data_dump/*.xlsx are declared.
+    # The exports carry 54 / 65 / 46 columns; these are the CDEs.
+    # The key column exports as "# pk" (Hybris impex artifact) -- it is `pk`
+    # once loaded into MySQL.
+    "B2B Customer": {
+        "source_system": "Hybris",
+        "source_object_name": "b2bcustomer",
+        "primary_key_field": "pk",
+        "columns": [
+            "uid", "originalUid", "name", "email", "phone",
+            "active", "loginDisabled", "creationtime",
+            "defaultB2BUnit", "hwCustomerType", "toolAccess",
+            "sessionCurrency", "sessionLanguage", "sfdcContactId",
+        ],
+    },
+    "B2B Unit": {
+        "source_system": "Hybris",
+        "source_object_name": "b2bunit",
+        "primary_key_field": "pk",
+        "columns": [
+            "uid", "name", "locName_en", "accountType",
+            "active", "orderBlock", "sfdcServiceLayer",
+        ],
+    },
+    "Address": {
+        "source_system": "Hybris",
+        "source_object_name": "address",
+        "primary_key_field": "pk",
+        "columns": [
+            "country", "postalcode", "billingAddress", "shippingAddress",
+            "saveAddress", "duplicate",
+        ],
+    },
 }
 
 # Convenience view: {entity_name: [column, ...]}
