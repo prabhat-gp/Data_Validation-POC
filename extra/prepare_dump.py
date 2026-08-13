@@ -50,6 +50,7 @@ sys.path.insert(0, BACKEND)
 import csv
 import re
 import time
+from contextlib import contextmanager
 import urllib.parse
 
 from sqlalchemy import create_engine, text
@@ -116,16 +117,46 @@ def suggest(missing, header):
     return out
 
 
+# Excel writes this as the first line when it saves a CSV with a non-comma
+# separator, and Hybris impex exports carry it too. It is a directive, not
+# data: it must be skipped, and it declares the delimiter for everything after.
+_SEP_DIRECTIVE = re.compile(r"^\s*sep\s*=\s*(.)\s*$", re.IGNORECASE)
+_DELIMS = [";", ",", "\t", "|"]
+
+
+@contextmanager
 def open_csv(path):
-    """utf-8-sig strips the BOM Excel and SFDC both like to add."""
+    """
+    Yields (file positioned at the HEADER row, delimiter).
+
+    Handles three things real exports do and a naive open() gets wrong:
+      * a UTF-8 BOM                    -> utf-8-sig
+      * a leading "sep=;" line         -> consumed, and its char becomes the
+                                          delimiter
+      * a non-comma delimiter          -> guessed from the header when there
+                                          is no sep= line
+    Without this a semicolon file reads as ONE column and every declared
+    column is reported missing.
+    """
     try:
         f = open(path, newline="", encoding="utf-8-sig")
-        f.readline()
-        f.seek(0)
-        return f
+        first = f.readline()
     except UnicodeDecodeError:
         print("      (not UTF-8 -- falling back to latin-1)")
-        return open(path, newline="", encoding="latin-1")
+        f = open(path, newline="", encoding="latin-1")
+        first = f.readline()
+
+    m = _SEP_DIRECTIVE.match(first.strip())
+    if m:
+        delim = m.group(1)          # file is already past the directive
+    else:
+        f.seek(0)
+        counts = {d: first.count(d) for d in _DELIMS}
+        delim = max(counts, key=counts.get) if any(counts.values()) else ","
+    try:
+        yield f, delim
+    finally:
+        f.close()
 
 
 # ----------------------------------------------------------- file lookup ---
@@ -165,13 +196,14 @@ def find_files(directory, only):
 def check(entity, path):
     meta = ENTITIES[entity]
     key, cols = meta["primary_key_field"], list(meta["columns"])
-    with open_csv(path) as f:
-        header = next(csv.reader(f))
+    with open_csv(path) as (f, delim):
+        header = next(csv.reader(f, delimiter=delim))
     found, missing = match_headers(header, key, cols)
     mb = os.path.getsize(path) / (1024 ** 2)
 
+    shown = {";": "semicolon", ",": "comma", "\t": "tab", "|": "pipe"}.get(delim, delim)
     print(f"\n  {entity}  <-  {os.path.basename(path)}  "
-          f"({mb:,.1f} MB, {len(header)} columns -> {len(cols) + 1})")
+          f"({mb:,.1f} MB, {shown}-separated, {len(header)} columns -> {len(cols) + 1})")
     renamed = 0
     for want in [key] + cols:
         real = found.get(want)
@@ -202,10 +234,12 @@ def slice_one(entity, path, out_dir, limit):
     out_path = os.path.join(out_dir, f"{ENTITIES[entity]['source_object_name']}.csv")
     t0, n, blank = time.time(), 0, 0
     key = order[0]
-    with open_csv(path) as fin, open(out_path, "w", newline="", encoding="utf-8") as fout:
+    with open_csv(path) as (fin, delim), \
+            open(out_path, "w", newline="", encoding="utf-8") as fout:
+        # output is always plain comma-separated, whatever the input used
         w = csv.writer(fout)
         w.writerow(order)
-        for row in csv.DictReader(fin):
+        for row in csv.DictReader(fin, delimiter=delim):
             rec = [(row.get(found[c]) or "").strip() for c in order]
             if not rec[0]:
                 blank += 1
@@ -249,8 +283,8 @@ def load_one(entity, csv_path, conn, keep, limit):
     table = meta["source_object_name"]
     order = [key] + cols
 
-    with open_csv(csv_path) as f:
-        header = next(csv.reader(f))
+    with open_csv(csv_path) as (f, delim):
+        header = next(csv.reader(f, delimiter=delim))
     found, missing = match_headers(header, key, cols)
     if missing:
         print(f"  {entity:<14} ABORTED -- sliced file is missing {missing}")
@@ -267,8 +301,8 @@ def load_one(entity, csv_path, conn, keep, limit):
     stmt = text(f"INSERT INTO `{table}` ({', '.join(f'`{c}`' for c in order)}) "
                 f"VALUES ({', '.join(f':{c}' for c in order)})")
     t0, n, batch = time.time(), 0, []
-    with open_csv(csv_path) as f:
-        for row in csv.DictReader(f):
+    with open_csv(csv_path) as (f, delim):
+        for row in csv.DictReader(f, delimiter=delim):
             batch.append({c: (row.get(found[c]) or "").strip() for c in order})
             if len(batch) >= BATCH:
                 conn.execute(stmt, batch); conn.commit(); batch = []
