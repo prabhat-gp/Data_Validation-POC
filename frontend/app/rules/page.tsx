@@ -5,6 +5,7 @@ import {
   Entity, Role, Rule, RuleType, SEVERITIES, STATUSES, api, getActor, getRole,
 } from "@/lib/api";
 import RuleDetail, { sevBadge, statusBadge } from "@/app/components/RuleDetail";
+import GenerateWithAI from "@/app/components/GenerateWithAI";
 
 /** Plain-English guide + the SQL each type becomes, shown for the current selection only. */
 const GUIDE: Record<string, { plain: string; example: string; sql: string }> = {
@@ -92,6 +93,7 @@ export default function RulesPage() {
   const [multiFields, setMultiFields] = useState<string[]>([]);
   const [lookupEntity, setLookupEntity] = useState("");
   const [lookupField, setLookupField] = useState("");
+  const [aiOpen, setAiOpen] = useState(false);
   const [aggFn, setAggFn] = useState("COUNT");
   const [aggField, setAggField] = useState("*");
   const [groupBy, setGroupBy] = useState<string[]>([]);
@@ -109,6 +111,40 @@ export default function RulesPage() {
   const lookupChoices = lookupEnt
     ? [lookupEnt.primary_key_field, ...lookupEnt.columns]
     : [];
+  // An object cannot be a foreign key into itself here -- the compiler joins
+  // the lookup entity's OWN staging table, so object == lookup object would
+  // join a table to itself and report every row as its own parent.
+  const lookupOptions = entities.filter((e) => e.entity_name !== entityName);
+
+  /**
+   * Does `column` look like it names `ent`? Foreign keys are conventionally
+   * named after what they point AT -- b2bcustomer.defaultB2BUnit -> B2B Unit,
+   * b2bunit.addresses -> Address. That convention is the only signal available
+   * for telling a foreign key from its mirror image.
+   */
+  function refersTo(column: string, ent?: Entity) {
+    if (!column || !ent) return false;
+    const c = column.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const names = [ent.entity_name, ent.source_object_name]
+      .map((n) => n.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    return names.some((n) => n.length > 2 && (c.includes(n) || c.includes(n.replace(/s$/, ""))));
+  }
+
+  /** Plain-English reading of the rule, plus a flag when it looks inverted. */
+  const refCheck = (() => {
+    if (ruleType !== "REFERENTIAL_INTEGRITY" || !entity || !lookupEnt || !fieldName || !lookupField)
+      return null;
+    const isPk = lookupField === lookupEnt.primary_key_field;
+    const forward = isPk || refersTo(fieldName, lookupEnt);
+    const inverted = !forward && refersTo(lookupField, entity);
+    return {
+      inverted,
+      forward,
+      // what the rule literally asserts, either way
+      reading: `Every ${entityName} whose ${fieldName} is filled must have a matching `
+             + `${lookupField} in ${lookupEntity}.`,
+    };
+  })();
 
   useEffect(() => { setActorLocal(getActor()); setRoleLocal(getRole()); }, []);
 
@@ -323,7 +359,8 @@ export default function RulesPage() {
               <div className="grid2">
                 <Fld label="Lookup Object">
                   <select value={lookupEntity} onChange={(e) => setLookupEntity(e.target.value)}>
-                    {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
+                    <option value="">Select…</option>
+                    {lookupOptions.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
                   </select>
                 </Fld>
                 <Fld label="Lookup Element">
@@ -337,6 +374,25 @@ export default function RulesPage() {
                   </select>
                 </Fld>
               </div>
+              {refCheck && (
+                <div className={`refnote${refCheck.inverted ? " warn" : ""}`}>
+                  {refCheck.inverted ? (
+                    <>
+                      <b>This looks like the wrong way round.</b> A foreign-key check belongs
+                      on the object that <i>holds</i> the reference, pointing at the one it
+                      names. Here <code>{lookupField}</code> looks like {lookupEntity}&rsquo;s
+                      reference to {entityName}, so the rule reads backwards: it will flag every{" "}
+                      {entityName} that <i>nothing</i> in {lookupEntity} points at — which is
+                      usually normal, not a defect.
+                      <br />
+                      You probably want <b>Object {lookupEntity}</b>, Element{" "}
+                      <code>{lookupField}</code>, looking up <b>{entityName}</b>.
+                    </>
+                  ) : (
+                    <>{refCheck.reading}{refCheck.forward ? "" : " Check the direction if that is not what you meant."}</>
+                  )}
+                </div>
+              )}
             </Cfg>
           )}
 
@@ -408,7 +464,9 @@ export default function RulesPage() {
             <button onClick={create} className="btn-primary">
               {editing ? "Save Changes" : "Save Draft"}
             </button>
-
+            <button onClick={() => setAiOpen(true)} className="btn-ai" type="button">
+              <span aria-hidden>✦</span> Generate with AI
+            </button>
           </div>
         </section>
 
@@ -512,6 +570,7 @@ export default function RulesPage() {
         </section>
 
         {detail && <RuleDetail rule={detail} onClose={() => setDetail(null)} />}
+        {aiOpen && <GenerateWithAI entity={entity} onClose={() => setAiOpen(false)} />}
       </div>
     </>
   );

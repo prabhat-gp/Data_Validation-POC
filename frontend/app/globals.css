@@ -526,6 +526,108 @@ table.cde tbody tr:hover { background: var(--panel-2); }
 .menu-note { padding: 8px 11px; font-size: 11px; color: var(--ink-faint); }
 
 /* rule detail modal (opens on row click) */
+/* --- Generate with AI ---------------------------------------------------- */
+/* Secondary to Save Draft: outlined, not filled, so the primary action still
+   reads as primary. The glyph carries the "AI" signal without an icon file. */
+.btn-ai {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 15px; border-radius: 8px; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  color: var(--accent); background: transparent;
+  border: 1px solid var(--accent);
+  transition: background .12s ease;
+}
+.btn-ai:hover { background: var(--accent-soft); }
+.btn-ai span { font-size: 13px; }
+
+.aicard {
+  width: min(660px, 100%); max-height: 88vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow-lg); padding: 20px 22px;
+  animation: rcIn .16s ease-out;
+}
+.ai-head { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.ai-head b { font-size: 15px; }
+.ai-glyph {
+  width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center;
+  background: var(--accent); color: #fff; font-size: 13px;
+}
+.ai-chip {
+  margin-left: auto; font-size: 9.5px; font-weight: 500; letter-spacing: .06em;
+  color: var(--warn); background: var(--warn-bg); padding: 3px 8px; border-radius: 6px;
+}
+.ai-sub { font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; margin: 0 0 14px; }
+
+.ai-presets { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.ai-preset {
+  font-family: inherit; font-size: 11.5px; padding: 6px 11px; border-radius: 999px;
+  cursor: pointer; color: var(--ink-soft);
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.ai-preset:hover { color: var(--accent); border-color: var(--accent); }
+
+.ai-prompt {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  font-family: inherit; font-size: 13px; line-height: 1.6;
+  padding: 12px 13px; border-radius: 9px;
+  color: var(--ink); background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.ai-prompt:focus { outline: none; border-color: var(--accent); }
+
+.ai-scope { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 14px; }
+.ai-field label {
+  display: block; font-size: 9.5px; font-weight: 500; text-transform: uppercase;
+  color: var(--ink-faint); margin-bottom: 5px;
+}
+.ai-field select {
+  width: 100%; font-family: inherit; font-size: 12.5px; padding: 8px 10px;
+  border-radius: 8px; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line);
+}
+.ai-static {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12.5px; font-weight: 500; color: var(--ink);
+  padding: 8px 10px; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--line);
+}
+.ai-static span { font-size: 11px; font-weight: 400; color: var(--ink-faint); }
+.ai-modelnote { font-size: 11.5px; color: var(--ink-faint); margin: 7px 0 14px; }
+
+.ai-dims { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-dim {
+  font-family: inherit; font-size: 11.5px; padding: 6px 11px; border-radius: 7px;
+  cursor: pointer; color: var(--ink-soft);
+  background: var(--panel); border: 1px solid var(--line);
+}
+.ai-dim.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+.ai-plan {
+  margin-top: 16px; padding: 13px 14px; border-radius: 9px;
+  font-size: 12.5px; line-height: 1.6;
+  color: var(--ink-soft); background: var(--panel-2); border: 1px solid var(--line);
+}
+.ai-plan b { color: var(--ink); }
+.ai-plan p { margin: 9px 0 0; font-size: 11.5px; color: var(--ink-faint); }
+.ai-plan-n { margin-top: 9px; font-size: 13px; color: var(--ink); }
+.ai-plan-n span {
+  font-size: 24px; font-weight: 500; color: var(--accent);
+  margin-right: 6px; vertical-align: -2px;
+}
+.ai-plan-el {
+  margin-top: 7px; font-family: ui-monospace, monospace; font-size: 11px;
+  color: var(--ink-faint); line-height: 1.7; word-break: break-word;
+}
+
+.ai-actions {
+  display: flex; align-items: center; gap: 9px; margin-top: 18px;
+  padding-top: 15px; border-top: 1px solid var(--line-soft);
+}
+.ai-est { flex: 1; font-size: 11.5px; color: var(--ink-faint); }
+.ai-actions .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+
+@media (max-width: 620px) { .ai-scope { grid-template-columns: 1fr; } }
+
 .modal-scrim {
   position: fixed; inset: 0; z-index: 60; background: rgba(10,14,20,.45);
   display: grid; place-items: center; padding: 24px;
@@ -588,6 +690,23 @@ table.cde tbody tr.clickable:hover { background: var(--panel-2); }
 .cfg-help {
   font-size: 12px; color: var(--ink-soft); line-height: 1.55;
   margin: 0 0 12px;
+}
+/* Plain-English reading of a referential-integrity rule. Turns amber when the
+   direction looks inverted -- see refCheck in rules/page.tsx. */
+.refnote {
+  margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  font-size: 12px; line-height: 1.6;
+  background: var(--panel-2); color: var(--ink-soft);
+  border-left: 3px solid var(--line);
+}
+.refnote.warn {
+  background: var(--warn-bg); color: var(--warn);
+  border-left-color: var(--warn);
+}
+.refnote code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px; padding: 1px 4px; border-radius: 3px;
+  background: rgba(128, 128, 128, .16);
 }
 .chip-bar {
   display: flex; align-items: center; gap: 12px; margin-bottom: 8px;

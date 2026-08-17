@@ -54,25 +54,37 @@ python create_tables.py
 Creates `stg_*` in `source_db`, `val_rules` + lookups in `config_db`, and the
 four result tables in `results_db`. Creates **no rules**.
 
-**5. Import the Account export**
+**5. Import the source exports**
 
-Check the header first — reads one line, takes a second:
+Put the wide CSVs in `data_dump/` — `Accounts.csv`, `B2BCustomer.csv`,
+`B2BUnit.csv`, `Address.csv`. Names are matched loosely, so `account.csv` and
+`B2B Customer.csv` work too.
 
-```bash
-python prepare_account.py --inspect "C:\path\accounts.csv"
-```
-
-All 17 columns must say `ok`. Anything `MISSING`, fix
-`ENTITIES["Account"]["columns"]` in `backend/app/models.py` **before** loading —
-a column that does not match arrives as NULL and scores 0% Completeness for
-reasons that have nothing to do with data quality.
+Check the headers first — reads one line per file, takes a second:
 
 ```bash
-python prepare_account.py "C:\path\accounts.csv"
+python prepare_dump.py --inspect
 ```
 
-Streams the file, keeps `Id` + the 16 CDEs, creates `source_db.account`.
-~2,700 rows/sec.
+Every column must say `ok`. Anything `MISSING`, fix that object's `columns` in
+`backend/app/models.py` **before** loading — a column that does not match
+arrives as NULL and scores 0% Completeness for reasons that have nothing to do
+with data quality.
+
+```bash
+python prepare_dump.py
+```
+
+Streams each file, keeps the primary key + that object's CDEs, and writes
+`final_dump/<table>.csv`. A 525 MB / 450-column Account export comes out at
+9 MB in ~20s. Open them and confirm the columns look right, then load:
+
+```bash
+python prepare_dump.py --load-only
+```
+
+Creates `source_db.account` / `.b2bcustomer` / `.b2bunit` / `.address`.
+`--load` does both steps in one pass if you do not need to look first.
 
 **6. Load the 20 Account rules**
 
@@ -139,6 +151,9 @@ app.
 | `create_tables.py` | builds the schema across all three databases |
 | `migrate_db.py` | adds columns the models gained since the DB was made |
 | `reset_db.py` | wipes rules + run history, resets ids to 1 |
-| `prepare_account.py` | slices a wide CSV export to the declared columns and loads it |
+| `prepare_dump.py` | slices wide CSV exports to the declared columns, then loads them |
+| `cleanup_source.py` | finds tables in source_db the catalog no longer knows about |
+| `after_pull.py` | runs the above in order after a pull, then verifies |
 | `seed_rules_account.py` | loads the 20 Account rules, already approved |
+| `seed_rules_hybris.py` | loads the 39 Hybris rules, already approved |
 | `test_violation_query.py` | proves every generated query matches the engine |

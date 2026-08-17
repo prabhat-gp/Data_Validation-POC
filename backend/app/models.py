@@ -83,7 +83,7 @@ SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"]
 
 ENTITIES: dict = {
     # SFDC. The 650MB / 450-column export is sliced to these 17 columns by
-    # extra/prepare_account.py and landed in source_db.
+    # extra/prepare_dump.py and landed in source_db.
     "Account": {
         "source_system": "SFDC",
         "source_object_name": "account",

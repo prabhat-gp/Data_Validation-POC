@@ -73,7 +73,7 @@ BATCH_SIZE = 5000
 INSERT_SELECT_CHUNK = 25_000
 
 # SFDC and Hybris extracts are IMPORTED INTO source_db -- see
-# extra/prepare_account.py. So every entity reads from source_db by default,
+# extra/prepare_dump.py. So every entity reads from source_db by default,
 # whatever source system it is labelled with; `source_system` is provenance
 # metadata, not a separate connection.
 #
