@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Role, SOURCE_SYSTEMS, getActor, getRole, setActor, setRole } from "@/lib/api";
+import { ALL_SOURCES, SOURCE_KEY, setGlobalSource } from "@/lib/useSource";
 import BrandMark from "./BrandMark";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
@@ -28,7 +29,7 @@ export default function Sidebar() {
   const [healthy, setHealthy] = useState<boolean | null>(null);
   const [role, setRoleState] = useState<Role>("admin");
   const [actor, setActorState] = useState("prabhat");
-  const [source, setSourceState] = useState("Hybris");
+  const [source, setSourceState] = useState(ALL_SOURCES);
 
   useEffect(() => {
     const saved = (localStorage.getItem("theme") as "light" | "dark") || null;
@@ -37,7 +38,7 @@ export default function Sidebar() {
     document.documentElement.setAttribute("data-theme", initial);
     setRoleState(getRole());
     setActorState(getActor());
-    setSourceState(localStorage.getItem("source") || "Hybris");
+    setSourceState(localStorage.getItem(SOURCE_KEY) || ALL_SOURCES);
   }, []);
 
   useEffect(() => {
@@ -57,11 +58,9 @@ export default function Sidebar() {
     document.documentElement.setAttribute("data-theme", next);
   }
 
-  /** The dashboard reads this; a custom event avoids a full page reload. */
   function changeSource(next: string) {
     setSourceState(next);
-    localStorage.setItem("source", next);
-    window.dispatchEvent(new CustomEvent("dq-source", { detail: next }));
+    setGlobalSource(next);
   }
 
   function changeRole(next: Role) {
@@ -86,18 +85,16 @@ export default function Sidebar() {
         </span>
       </div>
 
-      {/* Only the dashboard reads the source. On Rules and Runs it is either
-          irrelevant (rules are authored per object) or set on the page itself
-          (Runs has its own source picker), so leaving it here would be a
-          second control that silently disagrees with the one in view. */}
-      {pathname === "/dashboard" && (
-        <div className="src-pick">
-          <div className="nav-label">Source System</div>
-          <select value={source} onChange={(e) => changeSource(e.target.value)}>
-            {SOURCE_SYSTEMS.map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </div>
-      )}
+      {/* One source control for the whole app. Dashboard, Rules and Runs all
+          read it, so an object hidden here is hidden everywhere -- there is no
+          second picker on a page that could disagree with this one. */}
+      <div className="src-pick">
+        <div className="nav-label">Source System</div>
+        <select value={source} onChange={(e) => changeSource(e.target.value)}>
+          <option>{ALL_SOURCES}</option>
+          {SOURCE_SYSTEMS.map((s) => <option key={s}>{s}</option>)}
+        </select>
+      </div>
 
       <nav className="nav">
         {visible.map((item) => (

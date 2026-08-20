@@ -19,7 +19,6 @@ leave a stored status permanently wrong.
 import os
 import shutil
 import tempfile
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import (
@@ -29,7 +28,9 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..models import ENTITIES, SOURCE_SYSTEMS, ValBatch, ValRule, ValRun
+from ..models import (
+    ENTITIES, SOURCE_SYSTEMS, ValBatch, ValRule, ValRun, utcnow,
+)
 from ..schemas import BatchOut, BatchTriggerDb, RunOut
 from ..validation_engine import (
     clear_run_staging, finish_run, stage_run, validate_run,
@@ -37,9 +38,6 @@ from ..validation_engine import (
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
-
-def utcnow():
-    return datetime.now(timezone.utc)
 
 
 def _derive_batch_status(runs: list) -> str:
@@ -56,10 +54,14 @@ def _derive_batch_status(runs: list) -> str:
 
 def _batch_payload(db: Session, batch: ValBatch) -> BatchOut:
     runs = db.query(ValRun).filter(ValRun.batch_id == batch.batch_id).order_by(ValRun.run_id).all()
+    # Fall back to what the runs actually say. A batch stores a source only
+    # when every run agrees, and older rows predate that rule entirely.
+    systems = sorted({r.source_system for r in runs if r.source_system})
     return BatchOut(
         batch_id=batch.batch_id,
         batch_name=batch.batch_name,
         run_type=batch.run_type,
+        source_system=batch.source_system or (systems[0] if len(systems) == 1 else None),
         triggered_by=batch.triggered_by,
         started_at=batch.started_at,
         status=_derive_batch_status(runs),
@@ -201,9 +203,18 @@ def trigger_db_batch(
     if len(set(entities)) != len(entities):
         raise HTTPException(400, "the same object cannot appear twice in one batch")
 
-    src = payload.source_system or ENTITIES[entities[0]]["source_system"]
+    # Source is a property of the OBJECT, not of the trigger. One batch can
+    # legitimately span SFDC and Hybris, so each run carries its own system
+    # from the catalog; the batch records one only when every run agrees.
+    # Stamping the first entity's system onto all of them made a mixed batch
+    # mislabel every object in it, and the dashboard's source filter then hid
+    # or showed the wrong runs.
+    per_run = {e: ENTITIES[e]["source_system"] for e in entities}
+    distinct = set(per_run.values())
+    batch_src = distinct.pop() if len(distinct) == 1 else None
+
     batch = ValBatch(
-        batch_name=payload.batch_name, run_type="db_fetch", source_system=src,
+        batch_name=payload.batch_name, run_type="db_fetch", source_system=batch_src,
         triggered_by=payload.triggered_by or "system", started_at=utcnow(),
     )
     db.add(batch)
@@ -211,7 +222,7 @@ def trigger_db_batch(
     for entity in entities:
         db.add(ValRun(
             batch_id=batch.batch_id, entity_name=entity, run_type="db_fetch",
-            source_system=src, status="pending", started_at=utcnow(),
+            source_system=per_run[entity], status="pending", started_at=utcnow(),
         ))
     db.commit()
     db.refresh(batch)
@@ -221,17 +232,17 @@ def trigger_db_batch(
 
 
 @router.get("/source/objects")
-def list_source_objects(source_system: str = "MySQL", db: Session = Depends(get_db)):
+def list_source_objects(source_system: Optional[str] = None, db: Session = Depends(get_db)):
     """
-    What is ACTUALLY in the selected source, not what the catalog claims.
+    What is ACTUALLY in each source system, not what the catalog claims.
 
-    The Runs page used to filter ENTITIES by source_system, which meant an
-    object was invisible unless someone had hand-labelled it with the right
-    system -- and "MySQL" showed nothing at all even though every table lives
-    in MySQL. Source is a CONNECTION, so this introspects it.
+    Filtering ENTITIES by source_system meant an object was invisible unless
+    someone had hand-labelled it correctly. A source is a CONNECTION, so this
+    introspects one -- or, with no source_system, every system that owns at
+    least one object.
 
-    Each table is then matched to the catalog by source_object_name to answer
-    the only question that matters: can this be run?
+    Each table is matched to the catalog by source_object_name to answer the
+    only question that matters: can this be run?
 
         runnable    declared in ENTITIES and has >=1 approved rule
         no_rules    declared, but nothing approved to run against it
@@ -239,45 +250,70 @@ def list_source_objects(source_system: str = "MySQL", db: Session = Depends(get_
                     primary key are unknown, so there is nothing to validate.
                     Shown rather than hidden so the table is not a mystery.
 
-    Staging tables are excluded: they are this app's own scratch space.
+    SFDC and Hybris both resolve to SOURCE_DB until a live URL is configured,
+    so the same physical table would otherwise be listed once per system. Each
+    connection is therefore introspected once, and a table is attributed to the
+    system its catalog entry names. An undeclared table has no catalog entry to
+    attribute it to, so it is reported once, against the connection it was
+    found on.
     """
     from sqlalchemy import create_engine, inspect as sa_inspect
 
     from ..ingestion import source_url_for
     from ..models import staging_table_name
 
-    url = source_url_for(source_system)
-    if not url:
-        raise HTTPException(400, f"No connection configured for '{source_system}'.")
+    systems = [source_system] if source_system else [
+        s for s in SOURCE_SYSTEMS
+        if any(m["source_system"] == s for m in ENTITIES.values())
+    ]
 
-    try:
-        eng = create_engine(url)
-        tables = sorted(sa_inspect(eng).get_table_names())
-        eng.dispose()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"Could not read {source_system}: {exc}")
+    tables_by_url: dict = {}
+    for sys_name in systems:
+        url = source_url_for(sys_name)
+        if not url:
+            raise HTTPException(400, f"No connection configured for '{sys_name}'.")
+        if url in tables_by_url:
+            continue
+        try:
+            eng = create_engine(url)
+            tables_by_url[url] = (sys_name, sorted(sa_inspect(eng).get_table_names()))
+            eng.dispose()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"Could not read {sys_name}: {exc}")
 
     counts = dict(db_config_counts())
     by_table = {m["source_object_name"].lower(): (name, m)
                 for name, m in ENTITIES.items()}
     ours = {staging_table_name(n) for n in ENTITIES}
+    wanted = set(systems)
 
-    out = []
-    for t in tables:
-        if t.lower() in ours or t.lower().startswith("stg_"):
-            continue
-        hit = by_table.get(t.lower())
-        if hit is None:
-            out.append({"table_name": t, "entity_name": None, "approved_rule_count": 0,
-                        "element_count": 0, "status": "undeclared"})
-            continue
-        name, meta = hit
-        n = counts.get(name, 0)
-        out.append({
-            "table_name": t, "entity_name": name, "approved_rule_count": n,
-            "element_count": len(meta["columns"]),
-            "status": "runnable" if n else "no_rules",
-        })
+    out, seen = [], set()
+    for url, (found_on, tables) in tables_by_url.items():
+        for t in tables:
+            low = t.lower()
+            if low in ours or low.startswith("stg_") or low in seen:
+                continue
+            hit = by_table.get(low)
+            if hit is None:
+                seen.add(low)
+                out.append({
+                    "table_name": t, "entity_name": None, "source_system": found_on,
+                    "approved_rule_count": 0, "element_count": 0, "status": "undeclared",
+                })
+                continue
+            name, meta = hit
+            if meta["source_system"] not in wanted:
+                continue
+            seen.add(low)
+            n = counts.get(name, 0)
+            out.append({
+                "table_name": t, "entity_name": name,
+                "source_system": meta["source_system"],
+                "approved_rule_count": n, "element_count": len(meta["columns"]),
+                "status": "runnable" if n else "no_rules",
+            })
+    order = {s: i for i, s in enumerate(SOURCE_SYSTEMS)}
+    out.sort(key=lambda r: (order.get(r["source_system"], 99), r["table_name"]))
     return out
 
 
@@ -294,7 +330,7 @@ def db_config_counts():
 
 
 @router.get("/source/check")
-def check_source_connection(source_system: str = "MySQL"):
+def check_source_connection(source_system: str = "SFDC"):
     """
     Tests the configured source database BEFORE a run is allowed.
 

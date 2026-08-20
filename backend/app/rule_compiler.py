@@ -506,18 +506,6 @@ def referenced_entity(rule_type: str, rule_definition) -> Optional[str]:
     return cfg.get("lookupTable") or cfg.get("ref_entity_name")
 
 
-def fields_referenced(rule_type: str, field_name: str, rule_definition) -> set:
-    cfg = json.loads(rule_definition) if isinstance(rule_definition, str) else (rule_definition or {})
-    cfg = cfg or {}
-    out = {field_name} if field_name else set()
-    out.update(cfg.get("fields") or [])
-    out.update(cfg.get("groupBy") or [])
-    for c in (cfg.get("filter") or {}).get("conditions") or []:
-        if c.get("field"):
-            out.add(c["field"])
-    return {f for f in out if f}
-
-
 def compile_rule(rule_type: str, field_name: str, rule_definition, ctx: CompileContext) -> CompiledRule:
     fn = _COMPILERS.get(rule_type)
     if fn is None:

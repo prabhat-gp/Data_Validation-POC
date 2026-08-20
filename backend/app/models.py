@@ -30,8 +30,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base
 
-# TWO metadata sets -- config tables and results tables live in different
-# databases (CONFIG_DB / TARGET_DB), so they must not share one MetaData.
+# Three metadata sets: config, results and staging live in different
+# databases, so they must not share one MetaData.
 ConfigBase = declarative_base()     # config_db  -- rules + lookups
 ResultsBase = declarative_base()    # results_db -- batches, runs, metrics, violations
 StagingBase = declarative_base()    # source_db  -- stg_* tables, beside the source data
@@ -45,9 +45,8 @@ def utcnow():
 # ---------------------------------------------------------------------------
 # ENTITY CATALOG -- known up front (no dynamic discovery)
 # ---------------------------------------------------------------------------
-# Everything the removed dq_object / dq_element tables used to hold. Adding a
-# new object = adding an entry here, not a schema migration or a runtime
-# CREATE TABLE.
+# Adding a new object means adding an entry here -- not a schema migration
+# and not a runtime CREATE TABLE.
 #
 #   source_system       -> stamped onto every rule for this entity
 #   source_object_name  -> the real table/object name at source
@@ -77,9 +76,12 @@ def utcnow():
 #
 # Measured on 1M rows: a referential-integrity join went from not finishing in
 # 23 minutes to 16.5s once its key was indexed, on the DEFAULT join buffer.
-# See extra/scale_test.py.
-# Where data can come from. Drives the dashboard filter and the Runs page.
-SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"]
+# See extra/make_scale_data.py and extra/predict_failures.py.
+
+
+# SFDC and Hybris are the upstream systems of record. Both are landed into
+# SOURCE_DB by ETL -- what an Oracle staging layer does in production.
+SOURCE_SYSTEMS = ["SFDC", "Hybris", "File Dump"]
 
 ENTITIES: dict = {
     # SFDC. The 650MB / 450-column export is sliced to these 17 columns by
@@ -418,18 +420,28 @@ for _entity, _meta in ENTITIES.items():
     for _col in _meta["columns"]:
         _attrs[_col] = Column(_col, String(_lengths.get(_col, STAGING_COLUMN_LENGTH)))
 
-    # Every index is (run_id, <key>): a staging table holds one run at a time
-    # in normal use, but the leading run_id keeps the index selective if a
-    # previous run's rows have not been cleared yet.
+    # SINGLE COLUMN, and specifically NOT (run_id, col).
+    #
+    # Staging is truncated between runs, so run_id has a cardinality of ONE.
+    # Leading with it adds no selectivity, but it does make the index look
+    # usable for `WHERE run_id = :run_id`, which every per-row rule carries.
+    # MySQL then walks the whole index and does one row lookup per entry
+    # instead of a single sequential scan. Measured on 2.5M staged rows:
+    #
+    #     (run_id, record_key)   per-row rule  30.8s   FK join 5.9s
+    #     (record_key)           per-row rule   1.4s   FK join 7.0s
+    #
+    # 22x faster on the shape 37 of our 39 rules use, 19% slower on the two
+    # that join. There is no run_id index at all for the same reason -- one
+    # would simply reintroduce the bad plan.
     _indexes = [
         # record_key is the lookup target of EVERY referential-integrity rule
         # that points at a primary key -- the compiler rewrites the parent's
-        # `lookupField` to `record_key` when it is that entity's pk. So this
-        # one is not optional and is not per-entity.
-        Index(_index_name(_table, "record_key"), "run_id", "record_key"),
+        # `lookupField` to `record_key` when it is that entity's pk.
+        Index(_index_name(_table, "record_key"), "record_key"),
     ]
     _indexes += [
-        Index(_index_name(_table, _col), "run_id", _col)
+        Index(_index_name(_table, _col), _col)
         for _col in _meta.get("index_columns", [])
     ]
     _attrs["__table_args__"] = tuple(_indexes)

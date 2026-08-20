@@ -1,8 +1,12 @@
-# Setup
+# SMTC Data Validation Framework — Setup
+
+Rules are authored against declared objects, compiled to SQL, and run against
+staged copies of the source data. Every rule is one statement; Python loops
+over rules, never over data rows.
 
 ## Databases
 
-Three, all MySQL.
+Three, all on one server.
 
 | Database | Holds |
 |---|---|
@@ -11,27 +15,52 @@ Three, all MySQL.
 | `results_db` | `val_batches`, `val_runs`, `val_metrics`, `val_violations` |
 
 Staging sits in `source_db` beside the data it stages from, so a compiled rule
-never crosses a database boundary while it runs.
+never crosses a database boundary while it runs. Violations are written with
+`INSERT..SELECT` straight from staging, which needs `results_db` on the same
+server — if it is not, the engine falls back to a slower row-by-row path
+automatically.
 
-## From scratch on a new machine
+## Objects
+
+| Object | Source | Table | Elements | Rules |
+|---|---|---|---|---|
+| Account | SFDC | `account` | 16 | 20 |
+| B2B Customer | Hybris | `b2bcustomer` | 13 | 20 |
+| B2B Unit | Hybris | `b2bunit` | 8 | 13 |
+| Address | Hybris | `address` | 5 | 12 |
+
+SFDC and Hybris are systems of record. Both are landed into `source_db` by
+ETL — what an Oracle staging layer does in production.
+
+Two foreign keys, both declared on the child:
+
+    B2B Customer.defaultB2BUnit  ->  B2B Unit.uid
+    B2B Unit.addresses           ->  Address.pk
+
+Both objects must be in the **same run** — the join reads the lookup object's
+staging table, which only exists while the batch is in flight.
+
+---
+
+## First-time setup
 
 **1. Clone and install**
 
 ```bash
 git clone <repo-url>
-cd smtc-data-validation
+cd Data_Validation-POC
 python -m venv venv
-venv\Scripts\activate
+venv\Scripts\activate          # macOS/Linux: source venv/bin/activate
 pip install -r backend/requirements.txt
-```
-
-> macOS/Linux: `source venv/bin/activate`
-
-```bash
 cd frontend && npm install && cd ..
 ```
 
-**2. Create the three databases**
+**2. Set the password**
+
+`backend/.env` is tracked, so the clone already has it. Change `DB_PASSWORD`
+to this machine's MySQL password — everything else is correct as shipped.
+
+**3. Create the databases**
 
 ```sql
 CREATE DATABASE IF NOT EXISTS source_db;
@@ -39,121 +68,104 @@ CREATE DATABASE IF NOT EXISTS config_db;
 CREATE DATABASE IF NOT EXISTS results_db;
 ```
 
-**3. Point the app at them**
+**4. Load the source data**
 
-`backend/.env` is tracked, so the clone already has it. Set `DB_PASSWORD` to
-this machine's MySQL password — everything else is already correct.
-
-**4. Build the schema**
+Put the wide exports in `data_dump/` — `Accounts.csv`, `B2BCustomer.csv`,
+`B2BUnit.csv`, `Address.csv`. Names are matched loosely, a leading `sep=;`
+line is handled, and Hybris's `# pk` header resolves to `pk`.
 
 ```bash
 cd extra
-python create_tables.py
+python prepare_dump.py --inspect      # check every header, write nothing
+python prepare_dump.py                # slice -> final_dump/
 ```
 
-Creates `stg_*` in `source_db`, `val_rules` + lookups in `config_db`, and the
-four result tables in `results_db`. Creates **no rules**.
-
-**5. Import the source exports**
-
-Put the wide CSVs in `data_dump/` — `Accounts.csv`, `B2BCustomer.csv`,
-`B2BUnit.csv`, `Address.csv`. Names are matched loosely, so `account.csv` and
-`B2B Customer.csv` work too.
-
-Check the headers first — reads one line per file, takes a second:
+Open `final_dump/` and confirm the columns look right, then:
 
 ```bash
-python prepare_dump.py --inspect
+python prepare_dump.py --load-only    # load into source_db
 ```
 
-Every column must say `ok`. Anything `MISSING`, fix that object's `columns` in
-`backend/app/models.py` **before** loading — a column that does not match
-arrives as NULL and scores 0% Completeness for reasons that have nothing to do
-with data quality.
+`--load` does both steps at once if you do not need to look first.
+
+**5. Build the schema and load the rules**
 
 ```bash
-python prepare_dump.py
+python after_pull.py --apply
 ```
 
-Streams each file, keeps the primary key + that object's CDEs, and writes
-`final_dump/<table>.csv`. A 525 MB / 450-column Account export comes out at
-9 MB in ~20s. Open them and confirm the columns look right, then load:
+Creates every table, migrates anything that already existed, loads all 65
+rules, then verifies that each one compiles.
 
-```bash
-python prepare_dump.py --load-only
-```
-
-Creates `source_db.account` / `.b2bcustomer` / `.b2bunit` / `.address`.
-`--load` does both steps in one pass if you do not need to look first.
-
-**6. Load the 20 Account rules**
-
-```bash
-python seed_rules_account.py --direct
-```
-
-**7. Start it**
+**6. Start it**
 
 ```bash
 cd ../backend && python -m uvicorn app.main:app --reload --port 8000
-```
-
-```bash
 cd frontend && npm run dev
 ```
 
-**8. Run the validation**
+<http://localhost:3000> → **Runs** → tick the objects → **Run Selected**.
+Tick B2B Customer, B2B Unit and Address together or their foreign-key rules
+have nothing to join to.
 
-<http://localhost:3000> → **Runs** → source **SFDC** → tick **Account** → start.
+---
 
-Source is **SFDC**, not MySQL — the object is labelled by where the data came
-from. Every source system reads from `source_db` unless a live connection is
-configured (`SFDC_DB_URL`, `HYBRIS_DB_URL`).
-
-**9. Verify**
+## After pulling changes
 
 ```bash
-cd extra && python test_violation_query.py
+cd extra && python after_pull.py --apply
 ```
 
-Must print `20 match, 0 wrong`. Every rule's "show the failing rows" query is
-generated, run against `source_db`, and its row count compared to what the
-engine recorded.
+Then **restart the backend**. `ENTITIES` is read at import, so a running
+server will not see catalog changes.
 
-## Resetting
+Add `--fresh` to wipe all rules and run history and reset the id counters, and
+`--rules account|hybris|all|none` to choose what gets loaded.
 
-Clear rules and run history without touching `source_db`:
+---
 
-```bash
-cd extra
-python reset_db.py            # dry run, shows what it would delete
-python reset_db.py --apply
-python seed_rules_account.py --direct
-```
+## Server settings that matter
 
-## After a pull that changes models.py
+Measured on a 5,000,000-row run, these are not optional at scale:
 
-```bash
-cd extra && python migrate_db.py --apply
-```
+| Setting | Default | Use | Why |
+|---|---|---|---|
+| `innodb_buffer_pool_size` | 128 MB | **3 GB+** | the working set is ~1.4 GB; at the default every read is a disk read |
 
-`create_all()` only creates missing *tables* — it never alters an existing one.
-This adds columns the models gained, so you do not get
-`Unknown column 'val_runs.x' in field list` at run time.
+On Oracle the equivalent is `SGA_TARGET` / `PGA_AGGREGATE_TARGET`. On an
+8 GB box shared with the app, roughly 3 GB SGA and 1 GB PGA.
+
+Do **not** raise `join_buffer_size`. It is allocated per connection per join
+and multiplies with concurrency; an index on the join key is the real fix and
+is already declared.
+
+---
 
 ## Scripts
 
-Everything in `extra/` is standalone — none of it is imported by the running
-app.
+Everything in `extra/` is standalone — none of it is imported by the app.
 
 | Script | Does |
 |---|---|
+| `after_pull.py` | runs the four below in order, then verifies. **Start here.** |
 | `create_tables.py` | builds the schema across all three databases |
-| `migrate_db.py` | adds columns the models gained since the DB was made |
-| `reset_db.py` | wipes rules + run history, resets ids to 1 |
+| `migrate_db.py` | reconciles columns, types and indexes on databases that already exist |
+| `reset_db.py` | truncates rules and run history, resets ids to 1 |
+| `seed_rules_account.py` | the 20 Account rules, already approved |
+| `seed_rules_hybris.py` | the 45 Hybris rules, already approved |
 | `prepare_dump.py` | slices wide CSV exports to the declared columns, then loads them |
-| `cleanup_source.py` | finds tables in source_db the catalog no longer knows about |
-| `after_pull.py` | runs the above in order after a pull, then verifies |
-| `seed_rules_account.py` | loads the 20 Account rules, already approved |
-| `seed_rules_hybris.py` | loads the 39 Hybris rules, already approved |
-| `test_violation_query.py` | proves every generated query matches the engine |
+| `cleanup_source.py` | finds tables in `source_db` the catalog no longer knows about |
+| `test_violation_query.py` | proves every generated "show failing rows" query matches the engine |
+| `predict_failures.py` | computes what each rule *should* find, independently, and compares |
+| `make_scale_data.py` | generates a realistically-shaped dataset at any size, for capacity testing |
+
+### Verifying a deployment
+
+```bash
+cd extra
+python after_pull.py                  # dry run: compiles every rule
+python test_violation_query.py        # every query matches the engine
+python predict_failures.py --compare  # every rule matches an independent count
+```
+
+All three must be clean before a run is trusted.

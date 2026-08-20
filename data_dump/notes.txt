@@ -1,1 +1,0 @@
-In B2B Customer, focus on pk, active, defaultB2BUnit, email, hwCustomerType, loginDisabled, name, originalUid, phone, sessionCurrency, sessionLanguage, sfdcContactId, toolAccess,

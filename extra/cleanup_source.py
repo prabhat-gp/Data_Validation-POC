@@ -86,7 +86,7 @@ def main():
         print("\n  No orphan tables. Nothing to clean up.")
         return
 
-    print(f"\n  ORPHAN -- not referenced by any ENTITIES entry")
+    print("\n  ORPHAN -- not referenced by any ENTITIES entry")
     with source_engine.connect() as c:
         for t in orphans:
             try:

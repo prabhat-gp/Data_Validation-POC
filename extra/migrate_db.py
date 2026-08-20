@@ -319,6 +319,68 @@ def backfill_dimensions(do_it):
                             .bindparams(bindparam("ids", expanding=True)), {"ids": agg_ids})
 
 
+def backfill_source_system(do_it):
+    """
+    Re-stamp val_rules.source_system and val_runs.source_system from ENTITIES.
+
+    source_system is denormalized onto both tables at write time, so changing
+    the catalog never reaches rows that already exist. Runs recorded before
+    "MySQL" was retired still carry it, and the dashboard's source filter then
+    hides them under a system that no longer appears in the picker.
+
+    Only rows that disagree with the catalog are touched.
+    """
+    from sqlalchemy import inspect as sa_inspect
+    from app.models import ENTITIES
+
+    print("\n=== source_system backfill ===")
+    want = {e: m["source_system"] for e, m in ENTITIES.items()}
+    touched = 0
+
+    for engine, table in ((config_engine, "val_rules"), (results_engine, "val_runs")):
+        if table not in sa_inspect(engine).get_table_names():
+            continue
+        with engine.begin() as c:
+            for entity, src in want.items():
+                n = c.execute(
+                    text(f"SELECT COUNT(*) FROM {table} WHERE entity_name = :e "
+                         "AND (source_system IS NULL OR source_system <> :s)"),
+                    {"e": entity, "s": src}).scalar()
+                if not n:
+                    continue
+                touched += n
+                print(f"  {table:<12} {entity:<14} {n:>4} -> {src}")
+                if do_it:
+                    c.execute(
+                        text(f"UPDATE {table} SET source_system = :s "
+                             "WHERE entity_name = :e "
+                             "AND (source_system IS NULL OR source_system <> :s)"),
+                        {"s": src, "e": entity})
+
+    # A batch keeps a source only when every run in it agrees.
+    if "val_batches" in sa_inspect(results_engine).get_table_names():
+        with results_engine.begin() as c:
+            rows = c.execute(text(
+                "SELECT b.batch_id, COUNT(DISTINCT r.source_system) AS n, "
+                "       MIN(r.source_system) AS only_one "
+                "FROM val_batches b JOIN val_runs r ON r.batch_id = b.batch_id "
+                "GROUP BY b.batch_id")).fetchall()
+            for batch_id, n, only_one in rows:
+                target = only_one if n == 1 else None
+                cur = c.execute(text("SELECT source_system FROM val_batches WHERE batch_id = :b"),
+                                {"b": batch_id}).scalar()
+                if cur == target:
+                    continue
+                touched += 1
+                print(f"  val_batches  #{batch_id:<13} {cur} -> {target or 'NULL (mixed)'}")
+                if do_it:
+                    c.execute(text("UPDATE val_batches SET source_system = :s WHERE batch_id = :b"),
+                              {"s": target, "b": batch_id})
+
+    if not touched:
+        print("  every row already matches the catalog")
+
+
 def main():
     do_it = "--apply" in sys.argv
     targets = [
@@ -362,6 +424,7 @@ def main():
     # runs after the columns exist, so a fresh DB migrates in one pass
     if not n_cols or do_it:
         backfill_dimensions(do_it)
+        backfill_source_system(do_it)
 
     if do_it:
         print("\nDone. Restart the backend.")

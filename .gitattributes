@@ -1,0 +1,13 @@
+# Normalise line endings so a file edited on Windows and then on macOS does
+# not show as fully modified when nothing but CRLF/LF changed. backend/.env
+# did exactly that after a round trip through the office laptop.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.svg  text eol=lf
+*.otf  binary
+*.ttf  binary
+*.woff binary
+*.woff2 binary
+*.xlsx binary

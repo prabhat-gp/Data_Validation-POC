@@ -99,7 +99,7 @@ def main():
     print(f"\n  SOURCE_DB  : {sorted(StagingBase.metadata.tables)}")
     print(f"  CONFIG_DB  : {sorted(ConfigBase.metadata.tables)}")
     print(f"  RESULTS_DB : {sorted(ResultsBase.metadata.tables)}")
-    print(f"\nEntities (from the ENTITIES constant, no catalog table):")
+    print("\nEntities (from the ENTITIES constant, no catalog table):")
     for name, meta in ENTITIES.items():
         print(f"  {name:<16} -> {staging_table_name(name):<20} {len(meta['columns'])} columns")
     print("\nNo val_rules rows created -- add rules through the UI.")

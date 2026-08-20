@@ -1,7 +1,10 @@
 # SMTC Data Validation Framework — backend
 
-FastAPI + SQLAlchemy, MySQL only. No local-file fallback: a missing or wrong
-`.env` fails at startup rather than quietly running against an empty database.
+FastAPI + SQLAlchemy on MySQL, written to move to Oracle without touching the
+engine: every statement is built through SQLAlchemy Core or portable SQL, and
+nothing in the app branches on which database it is talking to. No local-file
+fallback -- a missing or wrong `.env` fails at startup rather than quietly
+running against an empty database.
 
 ## Databases
 
@@ -56,12 +59,20 @@ entry there plus `python extra/create_tables.py` to create its staging table.
 - `GET /api/entities` — the object/element catalog the rule form uses
 - `POST /api/runs/db-fetch`, `POST /api/runs/upload` — start a run
 - `GET /api/runs`, `GET /api/runs/{id}` — status and progress
+- `GET /api/runs/source/objects` — real tables in each source, matched to the
+  catalog; omit `source_system` for every system at once
 - `GET /api/dashboard/summary` — the whole overview in one round trip
 - `GET /api/dashboard/object/{name}/drilldown`
-- `GET /api/violations`, `GET /api/violations/export`
+- `GET /api/violations`, `GET /api/violations/export` — keyset paged on
+  `after_id`, not OFFSET, so page 5,000 costs the same as page 1
 
 ## Not built yet (by design)
 
-- Auth — Azure Entra ID SSO, deferred
-- Rule suggestion / profiling
+- Auth — Azure Entra ID SSO, deferred; role is a localStorage placeholder and
+  is enforced server-side in `rules.py`, not by hiding nav links
+- Rule generation — the UI composer exists and is clearly marked
+  `PREVIEW · NOT CONNECTED`; it returns a plan, never invented rules
 - Remediation lifecycle on violations
+- `val_violations` is uncapped and never purged between runs. At 5M source
+  rows one run writes ~3.9M violation rows / ~830 MB. Partitioning by
+  `run_id` is the fix when retention starts to matter.

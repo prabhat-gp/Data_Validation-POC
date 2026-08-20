@@ -60,17 +60,28 @@ def main():
             print("    python reset_db.py --apply")
             return
 
+        # TRUNCATE, not DELETE. DELETE removes rows one at a time, maintaining
+        # every index and writing undo for all of it -- on a val_violations
+        # holding 3.9M rows that measured over 15 MINUTES and was still going.
+        # TRUNCATE drops and recreates the storage: constant time, and it
+        # resets AUTO_INCREMENT as a side effect, so the separate ALTER goes
+        # away too.
+        #
+        # FOREIGN_KEY_CHECKS is disabled around it because val_violations and
+        # val_metrics carry a foreign key to val_runs, and MySQL refuses to
+        # truncate a table another table references -- even when the child is
+        # being emptied in the same breath.
         if not results_only:
-            c.execute(text("DELETE FROM val_rules"))
-            c.execute(text("ALTER TABLE val_rules AUTO_INCREMENT = 1"))
+            c.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+            c.execute(text("TRUNCATE TABLE val_rules"))
+            c.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
             c.commit()
-            print(f"\n  deleted {n_rules} rules, next id will be 1")
+            print(f"\n  cleared {n_rules} rules, next id will be 1")
 
-        # children first -- violations and metrics reference runs
-        for t in RESULT_TABLES:
-            r.execute(text(f"DELETE FROM {t}"))
-        for t in ["val_batches", "val_runs"]:
-            r.execute(text(f"ALTER TABLE {t} AUTO_INCREMENT = 1"))
+        r.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+        for t in list(RESULT_TABLES) + ["val_batches", "val_runs"]:
+            r.execute(text(f"TRUNCATE TABLE {t}"))
+        r.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
         r.commit()
         print(f"  cleared {sum(counts.values())} result rows, next run will be #1")
         print("\nsource_db was not touched. Next:")

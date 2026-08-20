@@ -1,9 +1,44 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { API_BASE, SOURCE_SYSTEMS, api, Batch, Entity, SourceCheck, SourceObject, getActor } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE, api, Batch, Entity, SourceCheck, SourceObject, fmtNum, getActor } from "@/lib/api";
+import { ALL_SOURCES, sourceParam, useSource } from "@/lib/useSource";
 
 interface FileSlot { file: File | null; entity: string }
+
+/**
+ * Timestamps are stored UTC and read by a team in India, so they are rendered
+ * in IST explicitly rather than in the browser's zone -- two people comparing
+ * the same run should never see two different clock times.
+ */
+function istStamp(iso: string): string {
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  return d.toLocaleString("en-GB", {
+    timeZone: "Asia/Kolkata", day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).replace(",", "") + " IST";
+}
+
+/** Distinct systems in the batch -- a batch may legitimately span two. */
+function batchSources(b: Batch): string {
+  const set = [...new Set(b.runs.map((r) => r.source_system).filter(Boolean))] as string[];
+  if (set.length) return set.join(" + ");
+  return b.source_system || "—";
+}
+
+function batchDuration(b: Batch): string {
+  const ends = b.runs.map((r) => r.finished_at).filter(Boolean) as string[];
+  if (!ends.length || b.status === "running") return "running…";
+  const utc = (v: string) => new Date(v.endsWith("Z") || v.includes("+") ? v : v + "Z").getTime();
+  const secs = Math.max(0, Math.round(
+    (Math.max(...ends.map(utc)) - utc(b.started_at)) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  return m < 60 ? `${m}m ${secs % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+
+
 
 export default function RunsPage() {
   const [entities, setEntities] = useState<Entity[]>([]);
@@ -19,7 +54,7 @@ export default function RunsPage() {
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [check, setCheck] = useState<SourceCheck | null>(null);
   const [checking, setChecking] = useState(false);
-  const [dbSource, setDbSource] = useState("MySQL");
+  const [source] = useSource();
   // Tables actually present in the selected source. Loaded from the server,
   // not derived from `entities` -- see api.sourceObjects.
   const [srcObjects, setSrcObjects] = useState<SourceObject[] | null>(null);
@@ -34,15 +69,25 @@ export default function RunsPage() {
     return () => clearInterval(pollRef.current);
   }, []);
 
-  // re-introspect whenever the source changes
+  // re-introspect whenever the global source filter changes
   useEffect(() => {
     let stale = false;
-    setSrcObjects(null); setSrcError(null);
-    api.sourceObjects(dbSource)
+    setSrcObjects(null); setSrcError(null); setDbSelected([]); setCheck(null);
+    api.sourceObjects(sourceParam(source))
       .then((o) => { if (!stale) setSrcObjects(o); })
       .catch((e) => { if (!stale) { setSrcObjects([]); setSrcError(String(e.message || e)); } });
     return () => { stale = true; };
-  }, [dbSource]);
+  }, [source]);
+
+  // objects bucketed by the system they belong to, in catalog order
+  const grouped = useMemo(() => {
+    const by = new Map<string, SourceObject[]>();
+    for (const o of srcObjects ?? []) {
+      if (!by.has(o.source_system)) by.set(o.source_system, []);
+      by.get(o.source_system)!.push(o);
+    }
+    return [...by.entries()];
+  }, [srcObjects]);
 
   function refresh() {
     api.batches().then((b) => {
@@ -86,7 +131,7 @@ export default function RunsPage() {
     setBusy(true);
     try {
       const b = await api.runFromDb({
-        entity_names: dbSelected, source_system: dbSource,
+        entity_names: dbSelected, source_system: sourceParam(source),
         batch_name: `DB fetch · ${new Date().toLocaleString()}`,
         triggered_by: "prabhat",
       });
@@ -153,21 +198,19 @@ export default function RunsPage() {
             </>
           ) : (
             <>
-              <div className="fld" style={{ maxWidth: 260 }}>
-                <label>Source</label>
-                <select value={dbSource}
-                        onChange={(e) => { setDbSource(e.target.value); setCheck(null); setDbSelected([]); }}>
-                  {SOURCE_SYSTEMS.filter((s) => s !== "File Dump").map((s) => <option key={s}>{s}</option>)}
-                </select>
-              </div>
-              <p className="mini dim" style={{ margin: "10px 0 12px" }}>
+              {/* No source picker here. Source is chosen once in the left
+                  panel and applies to the whole app, so this page shows
+                  whatever that filter admits, grouped by the system each
+                  object belongs to. */}
+              <p className="mini dim" style={{ margin: "0 0 12px" }}>
                 Pick objects — the query is generated from the catalog. No connection details
                 or SQL are entered here.
+                {source !== ALL_SOURCES && <> Showing <b>{source}</b> only.</>}
               </p>
               <div className="checkrow">
                 <button className="btn-mini" disabled={checking} onClick={async () => {
                   setChecking(true); setCheck(null);
-                  try { setCheck(await api.checkSource(dbSource)); }
+                  try { setCheck(await api.checkSource(sourceParam(source) || "SFDC")); }
                   catch (e: any) { setCheck({ ok: false, detail: String(e.message || e) }); }
                   finally { setChecking(false); }
                 }}>
@@ -180,39 +223,44 @@ export default function RunsPage() {
                 )}
                 {!check && <span className="mini dim">Test the source before running.</span>}
               </div>
-              {srcObjects === null && <p className="mini dim">Reading tables from {dbSource}…</p>}
-              {srcObjects?.map((o) => {
-                const disabled = o.status !== "runnable";
-                const label = o.entity_name ?? o.table_name;
-                return (
-                  <label key={o.table_name} className={`entrow${disabled ? " off" : ""}`}>
-                    {/* An undeclared table gets no checkbox at all -- there is
-                        nothing to select, so offering a disabled box just
-                        invites clicking it. The row stays visible so the table
-                        is accounted for rather than mysteriously absent. */}
-                    {o.status === "undeclared"
-                      ? <span className="box-none" aria-hidden />
-                      : <input type="checkbox" disabled={disabled}
-                               checked={!!o.entity_name && dbSelected.includes(o.entity_name)}
-                               onChange={(ev) => o.entity_name && setDbSelected(ev.target.checked
-                                 ? [...dbSelected, o.entity_name]
-                                 : dbSelected.filter((x) => x !== o.entity_name))} />}
-                    <span className="en">{label}</span>
-                    <span className="mini dim">
-                      {o.status === "runnable"
-                        && `${o.table_name} · ${o.element_count} elements · ${o.approved_rule_count} approved rule${o.approved_rule_count === 1 ? "" : "s"}`}
-                      {o.status === "no_rules"
-                        && `${o.table_name} · ${o.element_count} elements · no approved rules — nothing to run`}
-                      {o.status === "undeclared"
-                        && `${o.table_name} · this object is not part of our system`}
-                    </span>
-                  </label>
-                );
-              })}
+              {srcObjects === null && <p className="mini dim">Reading source tables…</p>}
+              {grouped.map(([sys, objs]) => (
+                <div key={sys} className="srcgroup">
+                  <div className="srcgroup-h">{sys}</div>
+                  {objs.map((o) => {
+                    const disabled = o.status !== "runnable";
+                    const label = o.entity_name ?? o.table_name;
+                    return (
+                      <label key={o.table_name} className={`entrow${disabled ? " off" : ""}`}>
+                        {/* An undeclared table gets no checkbox at all -- there
+                            is nothing to select, so offering a disabled box
+                            just invites clicking it. The row stays visible so
+                            the table is accounted for rather than absent. */}
+                        {o.status === "undeclared"
+                          ? <span className="box-none" aria-hidden />
+                          : <input type="checkbox" disabled={disabled}
+                                   checked={!!o.entity_name && dbSelected.includes(o.entity_name)}
+                                   onChange={(ev) => o.entity_name && setDbSelected(ev.target.checked
+                                     ? [...dbSelected, o.entity_name]
+                                     : dbSelected.filter((x) => x !== o.entity_name))} />}
+                        <span className="en">{label}</span>
+                        <span className="mini dim">
+                          {o.status === "runnable"
+                            && `${o.table_name} · ${o.element_count} elements · ${o.approved_rule_count} approved rule${o.approved_rule_count === 1 ? "" : "s"}`}
+                          {o.status === "no_rules"
+                            && `${o.table_name} · ${o.element_count} elements · no approved rules — nothing to run`}
+                          {o.status === "undeclared"
+                            && `${o.table_name} · this object is not part of our system`}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ))}
               {srcObjects?.length === 0 && (
                 <p className="mini dim">
-                  {srcError ? `Could not read ${dbSource}: ${srcError}`
-                            : `${dbSource} has no tables.`}
+                  {srcError ? `Could not read ${source}: ${srcError}`
+                            : `${source} has no tables.`}
                 </p>
               )}
               <div className="form-actions">
@@ -230,6 +278,12 @@ export default function RunsPage() {
           <div className="sec-head">
             <h2>Run History</h2>
             <span className="count">{batches.length} runs</span>
+            {/* Deliberately unfiltered. History is the audit trail -- hiding a
+                run because the source filter changed would make the record
+                look incomplete. Each row states its own source instead. */}
+            <span className="mini dim" style={{ marginLeft: 10 }}>
+              all sources · times in IST
+            </span>
           </div>
           {batches.length === 0 && <p className="mini">No runs yet.</p>}
           {batches.map((b) => (
@@ -237,15 +291,20 @@ export default function RunsPage() {
               <div className="bhead">
                 <b>Run #{b.batch_id}</b>
                 <span className={`badge ${batchBadge(b.status)}`}>{b.status.replace(/_/g, " ")}</span>
-                <span className="mini dim">
-                  {b.entity_count} object{b.entity_count === 1 ? "" : "s"} · {b.run_type.replace("_", " ")}
-                  {b.triggered_by ? ` · ${b.triggered_by}` : ""}
-                </span>
+                <span className="src-tag">{batchSources(b)}</span>
+                <span className="mini dim tnum">{istStamp(b.started_at)}</span>
                 <span className="spacer" />
-                <span className="mini dim">{new Date(b.started_at).toLocaleString()}</span>
                 <button className="btn-mini" onClick={() => setOpen({ ...open, [b.batch_id]: !open[b.batch_id] })}>
                   {open[b.batch_id] ? "Hide" : "Show more"}
                 </button>
+              </div>
+              {/* Every number is labelled -- a bare "27m 41s" left the reader
+                  guessing whether it was elapsed, queued or remaining. */}
+              <div className="bmeta">
+                <span>{fmtNum(b.runs.reduce((a, r) => a + (r.records_scanned || 0), 0))} records</span>
+                <span>{b.runs.reduce((a, r) => a + (r.rules_executed || 0), 0)} rules</span>
+                <span>took {batchDuration(b)}</span>
+                {b.triggered_by && <span>by {b.triggered_by}</span>}
               </div>
               {(b.status === "running" || b.runs.some((r) => r.phase && r.phase !== "done")) && (
                 <div className="prog-list">

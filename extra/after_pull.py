@@ -66,10 +66,7 @@ def verify():
 
     from sqlalchemy import inspect
     from app.database import config_engine, results_engine, source_engine
-    from app.models import (
-        ConfigBase, ENTITIES, ResultsBase, StagingBase, ValRule,
-        staging_table_name,
-    )
+    from app.models import ENTITIES, ValRule, staging_table_name
     from app.database import ConfigSession
     from app.rule_compiler import (
         CompileContext, RuleCompileError, compile_rule, referenced_entity,

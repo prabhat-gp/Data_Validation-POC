@@ -16,14 +16,13 @@ structural approval gate.
 
 import json
 import os
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_config_db as get_db
-from ..models import ENTITIES, ValRule
+from ..models import ENTITIES, ValRule, utcnow
 from ..rule_compiler import (
     RULE_TYPES, CompileContext, RuleCompileError, compile_rule, dimension_for,
     execution_type_for,
@@ -33,9 +32,6 @@ from ..violation_query import build as build_violation_query
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
-
-def utcnow():
-    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------

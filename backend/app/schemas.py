@@ -1,7 +1,7 @@
 """Pydantic request/response models for the API."""
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -94,6 +94,7 @@ class RunOut(BaseModel):
     batch_id: int
     entity_name: str
     run_type: str
+    source_system: Optional[str] = None
     status: str
     started_at: datetime
     finished_at: Optional[datetime]

@@ -1,5 +1,7 @@
 "use client";
 
+import { fmtNum as fmt } from "@/lib/api";
+
 /**
  * Severity split as a semicircular gauge.
  *
@@ -29,7 +31,6 @@ export default function ScoreGauge({
   const [ex, ey] = pt(100);
 
   const total = criticalCount + warningCount;
-  const fmt = (n: number) => (n >= 1000 ? Math.round(n / 1000) + "K" : String(n));
 
   return (
     <div className="gwrap">

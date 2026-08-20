@@ -25,7 +25,7 @@ import os
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 # Same .env files ingestion.py reads: repo root first, backend/ overrides.
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -85,14 +85,6 @@ ResultsSession = sessionmaker(bind=results_engine, autoflush=False, future=True)
 engine = results_engine
 SessionLocal = ResultsSession
 DATABASE_URL = RESULTS_URL
-
-
-def get_staging_db():
-    db = StagingSession()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def get_config_db():

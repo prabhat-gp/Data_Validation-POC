@@ -840,3 +840,29 @@ b, strong { font-weight: 700; }
 .nav-label, .kpi .lab, .flt .fl, .cde th, .badge, .rcr-head {
   letter-spacing: .04em;
 }
+
+/* Runs page: objects bucketed under the system they belong to. */
+.srcgroup { margin-bottom: 6px; }
+.srcgroup-h {
+  font-size: 9.5px; font-weight: 500; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--ink-faint);
+  padding: 10px 2px 4px; border-bottom: 1px solid var(--line-soft); margin-bottom: 2px;
+}
+.srcgroup:first-of-type .srcgroup-h { padding-top: 2px; }
+
+/* Run history: one dense header line, one meta line under it. */
+.bmeta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  padding: 2px 2px 10px; font-size: 11.5px; color: var(--ink-faint);
+}
+.bmeta > span { display: inline-flex; align-items: center; gap: 5px; }
+.bmeta > span + span::before {
+  content: ""; width: 3px; height: 3px; border-radius: 50%;
+  background: var(--line); margin-right: 9px;
+}
+.bmeta .objs { color: var(--ink-soft); font-weight: 500; }
+.src-tag {
+  font-size: 9.5px; font-weight: 500; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--accent-ink); background: var(--accent-soft);
+  padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+}

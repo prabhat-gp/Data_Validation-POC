@@ -21,6 +21,8 @@ frontend/.env.local
 # backend/.env IS tracked on purpose -- it carries the DB connection so a
 # fresh clone runs without hand-editing config.
 data_dump/
+# derived from data_dump by extra/prepare_dump.py -- regenerable, and large
+final_dump/
 extra/*.csv
 backend/source_db_snapshot.sql
 # PP Telegraf IS tracked. It was ignored, so a fresh clone got an empty

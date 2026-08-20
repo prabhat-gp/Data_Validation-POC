@@ -1,11 +1,11 @@
 """
 seed_rules_hybris.py
 --------------------
-39 rules for the three Hybris objects, as finalised by Prabhat.
+45 rules for the three Hybris objects, as finalised by Prabhat.
 
     B2B Customer  20
     B2B Unit      13
-    Address        6
+    Address       12
 
 Every rule here was compiled against the real column lists and executed
 against the 49 / 49 / 50 row extracts in data_dump/ before being written down,
@@ -109,18 +109,36 @@ RULES = {
          "REFERENTIAL_INTEGRITY", "CRITICAL",
          {"lookupTable": "Address", "lookupField": "pk"}),
     ],
-    # ----------------------------------------------------------------- 6 ---
+    # ----------------------------------------------------------------- 12 ---
     "Address": [
         ("Country is required", "country", "COMPLETENESS", "CRITICAL", {}),
-        ("Country is a 2-letter ISO code", "country", "VALIDITY", "ERROR",
+        ("Country is a 2-letter uppercase ISO code", "country", "VALIDITY", "ERROR",
          {"pattern": r"^[A-Z]{2}$"}),
+        ("Country must be a serviced country", "country", "ALLOWED_VALUES", "WARNING",
+         {"allowedValues": ["US", "CA"]}),
         ("Postal code is required", "postalcode", "COMPLETENESS", "CRITICAL", {}),
-        ("Billing flag must be True or False", "billingAddress", "ALLOWED_VALUES", "ERROR",
-         {"allowedValues": ["True", "False"]}),
-        ("Shipping flag must be True or False", "shippingAddress", "ALLOWED_VALUES", "ERROR",
-         {"allowedValues": ["True", "False"]}),
-        ("Save address must be True or False", "saveAddress", "ALLOWED_VALUES", "INFO",
-         {"allowedValues": ["True", "False"]}),
+        ("Postal code has no odd characters", "postalcode", "VALIDITY", "WARNING",
+         {"pattern": r"^[A-Za-z0-9 -]+$"}),
+        ("Postal code has no leading or trailing space", "postalcode", "CUSTOM_SQL", "WARNING",
+         {"expression": "postalcode <> TRIM(postalcode)"}),
+        # LENGTH is byte length and CHAR_LENGTH is not on the expression
+        # whitelist, so the US/CA shape is checked with a pattern per country
+        # rather than a cross-field length test.
+        ("US postal code is 5 digits or ZIP+4", "postalcode", "CROSS_FIELD_SIMPLE", "ERROR",
+         {"expression": "country = 'US' AND postalcode NOT LIKE '_____' "
+                        "AND postalcode NOT LIKE '_____-____'"}),
+        ("Billing flag must be true or false", "billingAddress", "ALLOWED_VALUES", "ERROR",
+         {"allowedValues": ["true", "false"]}),
+        ("Shipping flag must be true or false", "shippingAddress", "ALLOWED_VALUES", "ERROR",
+         {"allowedValues": ["true", "false"]}),
+        ("Save address must be true or false", "saveAddress", "ALLOWED_VALUES", "INFO",
+         {"allowedValues": ["true", "false"]}),
+        ("An address is not both billing and shipping", "shippingAddress",
+         "CROSS_FIELD_SIMPLE", "WARNING",
+         {"expression": "billingAddress = 'true' AND shippingAddress = 'true'"}),
+        ("An address must be billing or shipping", "billingAddress",
+         "CROSS_FIELD_SIMPLE", "ERROR",
+         {"expression": "billingAddress = 'false' AND shippingAddress = 'false'"}),
     ],
 }
 

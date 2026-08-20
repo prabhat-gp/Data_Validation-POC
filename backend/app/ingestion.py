@@ -23,7 +23,6 @@ string, and no user-supplied SQL is executed against the source system.
 import csv
 import os
 from typing import Optional
-from urllib.parse import quote_plus
 
 # Credentials come from a gitignored .env, not a shell command -- that keeps
 # them out of shell history and works identically on Windows and macOS
@@ -40,21 +39,6 @@ try:
 except ImportError:
     pass
 
-
-def _mysql_url_from_parts():
-    """
-    Build a SQLAlchemy URL from the discrete DB_* variables this project
-    already had, so nothing needs duplicating. An explicit MYSQL_URL still
-    wins if it is set.
-    """
-    host = os.getenv("DB_HOST")
-    db = os.getenv("SOURCE_DB")
-    if not host or not db:
-        return None
-    user = os.getenv("DB_USER", "root")
-    pwd = quote_plus(os.getenv("DB_PASSWORD", ""))
-    port = os.getenv("DB_PORT", "3306")
-    return f"mysql+pymysql://{user}:{pwd}@{host}:{port}/{db}"
 
 from sqlalchemy import (
     Column as SAColumn, MetaData, String as SAString, Table, cast, func, insert,
@@ -79,8 +63,8 @@ INSERT_SELECT_CHUNK = 25_000
 #
 # A per-system URL is only needed if you later point at a live system instead
 # of an import. Setting one of these overrides source_db for that system:
-#   SFDC_DB_URL=... HYBRIS_DB_URL=... MYSQL_URL=...
-ENV_VAR_FOR = {"MySQL": "MYSQL_URL", "SFDC": "SFDC_DB_URL", "Hybris": "HYBRIS_DB_URL"}
+#   SFDC_DB_URL=...   HYBRIS_DB_URL=...
+ENV_VAR_FOR = {"SFDC": "SFDC_DB_URL", "Hybris": "HYBRIS_DB_URL"}
 
 SOURCE_URLS = {name: os.getenv(var) for name, var in ENV_VAR_FOR.items()}
 

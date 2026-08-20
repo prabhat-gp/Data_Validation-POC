@@ -14,6 +14,7 @@ with no cross-database join -- exactly what the 3-database split needs.
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -353,26 +354,37 @@ def batch_options(run_type: Optional[str] = None, source_system: Optional[str] =
     source. Feeds the dashboard's Data Source -> Run ID cascade: pick db_fetch
     and only db_fetch batches are offered.
     """
-    q = db.query(ValBatch)
+    # ONE query, not one COUNT per batch. Filtering on ValRun.source_system
+    # rather than ValBatch.source_system matters: a batch spanning two systems
+    # stores NULL, so filtering the batch would hide it from both.
+    q = (
+        db.query(
+            ValBatch.batch_id, ValBatch.batch_name, ValBatch.run_type,
+            ValBatch.source_system, ValBatch.started_at,
+            func.count(ValRun.run_id).label("done"),
+        )
+        .join(ValRun, ValRun.batch_id == ValBatch.batch_id)
+        .filter(ValRun.status == "completed")
+        .group_by(ValBatch.batch_id, ValBatch.batch_name, ValBatch.run_type,
+                  ValBatch.source_system, ValBatch.started_at)
+        .order_by(ValBatch.batch_id.desc())
+    )
     if run_type:
         q = q.filter(ValBatch.run_type == run_type)
     if source_system:
-        q = q.filter(ValBatch.source_system == source_system)
-    out = []
-    for b in q.order_by(ValBatch.batch_id.desc()).all():
-        done = db.query(ValRun).filter(
-            ValRun.batch_id == b.batch_id, ValRun.status == "completed"
-        ).count()
-        if done:
-            out.append({
-                "batch_id": b.batch_id,
-                "batch_name": b.batch_name or f"Run #{b.batch_id}",
-                "run_type": b.run_type,
-                "source_system": b.source_system,
-                "entity_count": done,
-                "started_at": b.started_at,
-            })
-    return out
+        q = q.filter(ValRun.source_system == source_system)
+
+    return [
+        {
+            "batch_id": r.batch_id,
+            "batch_name": r.batch_name or f"Run #{r.batch_id}",
+            "run_type": r.run_type,
+            "source_system": r.source_system,
+            "entity_count": r.done,
+            "started_at": r.started_at,
+        }
+        for r in q.all()
+    ]
 
 
 @router.get("/summary")

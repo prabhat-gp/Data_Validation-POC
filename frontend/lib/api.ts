@@ -85,6 +85,7 @@ export interface Run {
   batch_id: number;
   entity_name: string;
   run_type: string;
+  source_system: string | null;
   status: string;
   started_at: string;
   finished_at: string | null;
@@ -102,6 +103,7 @@ export interface Batch {
   batch_id: number;
   batch_name: string | null;
   run_type: string;
+  source_system: string | null;
   triggered_by: string | null;
   started_at: string;
   status: string;          // running | completed | completed_with_errors | empty
@@ -222,6 +224,7 @@ export interface SourceCheck { ok: boolean; detail: string }
 export interface SourceObject {
   table_name: string;
   entity_name: string | null;       // null = no catalog entry for this table
+  source_system: string;
   approved_rule_count: number;
   element_count: number;
   status: "runnable" | "no_rules" | "undeclared";
@@ -236,7 +239,8 @@ export interface ViolationQuery {
   note: string;
 }
 
-export const SOURCE_SYSTEMS = ["SFDC", "Hybris", "MySQL", "File Dump"];
+// Must match SOURCE_SYSTEMS in backend/app/models.py.
+export const SOURCE_SYSTEMS = ["SFDC", "Hybris", "File Dump"];
 
 export const SEVERITIES = ["INFO", "WARNING", "ERROR", "CRITICAL"];
 export const STATUSES = ["DRAFT", "PENDING", "APPROVED", "REJECTED", "UPDATED", "RETIRED"];
@@ -253,8 +257,10 @@ export const api = {
     get<BatchOption[]>(`/api/dashboard/batch-options${sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : ""}`),
   checkSource: (sourceSystem: string) =>
     get<SourceCheck>(`/api/runs/source/check?source_system=${encodeURIComponent(sourceSystem)}`),
-  sourceObjects: (sourceSystem: string) =>
-    get<SourceObject[]>(`/api/runs/source/objects?source_system=${encodeURIComponent(sourceSystem)}`),
+  // omit sourceSystem for every system at once
+  sourceObjects: (sourceSystem?: string) =>
+    get<SourceObject[]>("/api/runs/source/objects"
+      + (sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : "")),
   drilldown: (entityName: string, sourceSystem?: string) =>
     get<Drilldown>(`/api/dashboard/object/${encodeURIComponent(entityName)}/drilldown` +
       (sourceSystem ? `?source_system=${encodeURIComponent(sourceSystem)}` : "")),
@@ -311,8 +317,12 @@ export function ragClass(score: number): "good" | "warn" | "crit" {
   return "crit";
 }
 
+/** 3,945,096 -> "3.9M", 157,164 -> "157K", 842 -> "842". */
 export function fmtNum(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + "M";
-  if (n >= 1_000) return Math.round(n / 1000) + "K";
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return (m >= 100 ? Math.round(m) : Number(m.toFixed(1))) + "M";
+  }
+  if (n >= 1_000) return Math.round(n / 1_000) + "K";
   return String(n);
 }

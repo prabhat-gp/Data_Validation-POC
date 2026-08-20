@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState } from "react";
 import {
-  Entity, Role, Rule, RuleType, SEVERITIES, STATUSES, api, getActor, getRole,
+  Entity, Role, Rule, RuleType, SEVERITIES, api, getActor, getRole,
 } from "@/lib/api";
 import RuleDetail, { sevBadge, statusBadge } from "@/app/components/RuleDetail";
 import GenerateWithAI from "@/app/components/GenerateWithAI";
+import { ALL_SOURCES, useSource } from "@/lib/useSource";
 
 /** Plain-English guide + the SQL each type becomes, shown for the current selection only. */
 const GUIDE: Record<string, { plain: string; example: string; sql: string }> = {
@@ -75,7 +76,7 @@ export default function RulesPage() {
   const [actor, setActorLocal] = useState("prabhat");
   const [role, setRoleLocal] = useState<Role>("admin");
   const [fEntity, setFEntity] = useState("");
-  const [fStatus, setFStatus] = useState("");
+  const [fType, setFType] = useState("");
 
   // form
   const [entityName, setEntityName] = useState("");
@@ -104,6 +105,14 @@ export default function RulesPage() {
   const [editing, setEditing] = useState<number | null>(null);
   const [menuFor, setMenuFor] = useState<number | null>(null);
   const [detail, setDetail] = useState<Rule | null>(null);
+  const [source] = useSource();
+
+  // The left-panel source filter governs this page too: an object outside the
+  // chosen system is not offered for authoring, and its rules are hidden from
+  // the table. Without this a user could author a Hybris rule while the rest
+  // of the app is scoped to SFDC and never see it again.
+  const inSource = (sys?: string) => source === ALL_SOURCES || sys === source;
+  const visibleEntities = entities.filter((e) => inSource(e.source_system));
 
   const entity = entities.find((e) => e.entity_name === entityName);
   const columns = entity?.columns || [];
@@ -114,7 +123,7 @@ export default function RulesPage() {
   // An object cannot be a foreign key into itself here -- the compiler joins
   // the lookup entity's OWN staging table, so object == lookup object would
   // join a table to itself and report every row as its own parent.
-  const lookupOptions = entities.filter((e) => e.entity_name !== entityName);
+  const lookupOptions = visibleEntities.filter((e) => e.entity_name !== entityName);
 
   /**
    * Does `column` look like it names `ent`? Foreign keys are conventionally
@@ -158,6 +167,17 @@ export default function RulesPage() {
   }, []);
 
   useEffect(() => { setFieldName(""); setMultiFields([]); setGroupBy([]); }, [entityName]);
+
+  // Changing the source can strip the object the form is sitting on. Move to
+  // the first one still visible rather than leaving a selection that is not in
+  // its own dropdown.
+  useEffect(() => {
+    if (!visibleEntities.length) return;
+    if (!visibleEntities.some((e) => e.entity_name === entityName)) {
+      setEntityName(visibleEntities[0].entity_name);
+    }
+    if (fEntity && !visibleEntities.some((e) => e.entity_name === fEntity)) setFEntity("");
+  }, [source, entities]);
   useEffect(() => { setLookupField(""); }, [lookupEntity]);
 
   const refresh = () => api.rules().then(setRules).catch(() => {});
@@ -258,7 +278,9 @@ export default function RulesPage() {
   }
 
   const shown = rules.filter(
-    (r) => (!fEntity || r.entity_name === fEntity) && (!fStatus || r.status === fStatus)
+    (r) => inSource(entities.find((e) => e.entity_name === r.entity_name)?.source_system)
+        && (!fEntity || r.entity_name === fEntity)
+        && (!fType || r.rule_type === fType)
   );
   const isAdmin = role === "admin";
   const guide = GUIDE[ruleType];
@@ -294,7 +316,7 @@ export default function RulesPage() {
           <div className="grid2">
             <Fld label="Object">
               <select value={entityName} onChange={(e) => setEntityName(e.target.value)}>
-                {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
+                {visibleEntities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
               </select>
             </Fld>
             <Fld label="Rule Type">
@@ -489,11 +511,13 @@ export default function RulesPage() {
             <span className="spacer" />
             <select className="sm" value={fEntity} onChange={(e) => setFEntity(e.target.value)}>
               <option value="">All objects</option>
-              {entities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
+              {visibleEntities.map((e) => <option key={e.entity_name}>{e.entity_name}</option>)}
             </select>
-            <select className="sm" value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
-              <option value="">All status</option>
-              {STATUSES.map((s) => <option key={s}>{s}</option>)}
+            <select className="sm" value={fType} onChange={(e) => setFType(e.target.value)}>
+              <option value="">All types</option>
+              {ruleTypes.map((t) => (
+                <option key={t.code} value={t.code}>{t.code.replace(/_/g, " ")}</option>
+              ))}
             </select>
           </div>
           <table className="cde">

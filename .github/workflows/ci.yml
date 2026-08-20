@@ -1,11 +1,14 @@
 name: CI
 
-# Runs on both branches. No MySQL, no PR needed -- this is the 60-second
-# "did I break the build" check. The real proof (test_violation_query.py)
-# needs a database, so run that locally before merging test -> main.
+# The 60-second "did I break the build" check. It deliberately does NOT stand
+# up a database: the real proof is extra/after_pull.py (compiles every rule)
+# and extra/test_violation_query.py (checks every generated query against what
+# the engine recorded), both of which need real data. Run those locally.
 on:
   push:
     branches: [main, test]
+  pull_request:
+    branches: [main]
 
 jobs:
   check:
@@ -17,8 +20,12 @@ jobs:
         with: { python-version: "3.11", cache: pip }
       - run: pip install -r backend/requirements.txt
       - name: Python compiles
-        working-directory: backend
-        run: python -m compileall -q app *.py
+        run: python -m compileall -q backend/app extra
+
+      - name: No unused imports or dead names
+        run: |
+          pip install -q pyflakes
+          python -m pyflakes backend/app backend/app/routers extra
 
       - uses: actions/setup-node@v4
         with:
@@ -31,10 +38,16 @@ jobs:
         working-directory: frontend
         run: npx tsc --noEmit
 
-      - name: No credentials or real data committed
+      # backend/.env and the PP Telegraf files are tracked ON PURPOSE -- see
+      # .gitignore. What must never land is customer data.
+      - name: No customer data committed
         run: |
-          bad=0
-          git ls-files | grep -E '(^|/)\.env$'            && { echo "::error::.env is tracked"; bad=1; }
-          git ls-files | grep -E '^data_dump/|\.csv$'     && { echo "::error::data files tracked"; bad=1; }
-          git ls-files | grep -E '\.(woff2?|otf|ttf)$'    && { echo "::error::font binaries tracked"; bad=1; }
-          exit $bad
+          if git ls-files | grep -E '^(data_dump|final_dump)/'; then
+            echo "::error::source data is tracked -- both folders are gitignored"
+            exit 1
+          fi
+          if git ls-files | grep -E '\.(csv|xlsx)$'; then
+            echo "::error::a data file is tracked"
+            exit 1
+          fi
+          echo "clean"
